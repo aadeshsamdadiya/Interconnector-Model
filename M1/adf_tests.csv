@@ -1,0 +1,4 @@
+,ADF Statistic,p-value,Lags Used,Critical 1%,Critical 5%,Reject H₀ (5%)
+GB Price (GBP/MWh),-4.009,0.0085,21,-3.965,-3.413,YES
+FR Price (GBP/MWh),-3.314,0.0641,23,-3.965,-3.413,no
+Spread (GBP/MWh),-5.093,0.0001,13,-3.965,-3.413,YES

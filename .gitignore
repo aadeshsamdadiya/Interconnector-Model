@@ -1,0 +1,48 @@
+# macOS
+.DS_Store
+__MACOSX/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Large data file — keep locally, do not commit
+Cleaned_GBFR.xlsx
+
+# MS Office lock files
+~$*.xlsx
+~$*.xlsm
+~$*.docx
+
+# Executed notebooks (outputs only — source notebooks are committed)
+M1/IC_descriptive_stats_executed.ipynb
+M2/IC_spread_direct_executed.ipynb
+
+# Excel output files (derived from CSVs — not tracked)
+M1/*.xlsm
+M2/*.xlsm
+cap_and_floor_financial_model_-_ifa2_fpa (1).xlsm
+copy_cap_and_floor_financial_model_-_ifa2_fpa.xlsm
+
+# Large general reference PDFs (not project-specific)
+Python-for-Data-Analysis.pdf
+MDPI.pdf
+Simulation - Battery Storages.pdf
+sapei - GARCH.pdf
+Modeling and Forecasting Electricity Loads and Prices - 2006 - Weron.pdf
+Upside Capture.pdf
+Are private investors compensated in infra.pdf
+Distributional effects of brexit.pdf
+Theeffectofintermittentrenewablesontheelectricitypricevariance.pdf
+
+# Legacy / reference folders (not part of core model)
+Handbook on electricity mkts/
+EINFRA/
+IFA2/
+Plots/
+Tech/
