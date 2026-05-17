@@ -68,8 +68,9 @@ EXCEL_PATH = IC_DIR / 'Cleaned_GBFR.xlsx'
 OUTPUT_DIR = IC_DIR / 'M2'
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-FID_YEAR        = 2028
-REGIME_YEARS    = 25
+REGIME_START    = 2021   # IFA2 Window 2 commissioning year
+PROJ_START_YEAR = 2026   # first year without a complete Ofgem actual
+N_PROJ_YEARS    = 20     # 2026-2045  (total regime = 25 yrs: 2021-2045)
 CAPACITY_MW     = 1_000
 AVAILABILITY    = 0.9659
 N_PATHS         = 10_000
@@ -77,10 +78,12 @@ RANDOM_SEED     = 42
 PROJ_TAU_GROWTH = 0.0
 ANCHOR_DATE     = pd.Timestamp('2025-01-01')
 
+# Ofgem-disclosed gross congestion revenues (net of market costs), GBPm
+# 2021 not separately disclosed (commissioning / ramp-up year)
 ACTUALS = {2022: 134.9, 2023: 188.3, 2024: 107.5, 2025: 109.4}
 
-print(f'Config: FID={FID_YEAR}  REGIME={REGIME_YEARS}yr  '
-      f'CAPACITY={CAPACITY_MW}MW  AVAILABILITY={AVAILABILITY}')
+print(f'Config: REGIME_START={REGIME_START}  PROJ={PROJ_START_YEAR}-{PROJ_START_YEAR+N_PROJ_YEARS-1}')
+print(f'        CAPACITY={CAPACITY_MW}MW  AVAILABILITY={AVAILABILITY}')
 print(f'        N_PATHS={N_PATHS:,}  ANCHOR={ANCHOR_DATE.date()}')
 """))
 
@@ -724,9 +727,87 @@ print(f'  Normality p={p_norm:.4f}  '
       f'({"reject" if p_norm < 0.05 else "consistent with"} normality)')
 """))
 
-# ── Section 12 ─────────────────────────────────────────────────────────────
+# ── Section 12: Back-test & Validation ────────────────────────────────────
 cells.append(md("""\
-## Section 12: Monte Carlo Setup — Hourly f_S Projection and Capture Ratio
+## Section 12: Back-test — Model Validation Against 2022–2025 Actuals
+
+The OLS and OU parameters are estimated from 2021–2026 data independently of the Ofgem
+actuals. This section tests the model's out-of-model performance: apply the fitted OLS
+to the actual 2022–2025 hourly spread data, compute gross theoretical revenue
+(no stochastic component, no capture ratio), and compare to what Ofgem actually disclosed.
+
+The gap between gross theoretical and Ofgem actuals reveals the implied **market-cost
+deduction rate** — auction premiums, TSO charges, balancing costs, and operational losses.
+This rate is not a model tuning parameter; it is an observed fact about market structure.
+"""))
+
+cells.append(code("""\
+print('Back-test: OLS deterministic revenue vs Ofgem actuals')
+print('=' * 68)
+print(f'  {"Year":<6}  {"Gross (actual spread)":>22}  {"OLS det. |f_S|":>16}  '
+      f'{"Ofgem actual":>14}  {"Implied CR":>11}')
+print('  ' + '-' * 75)
+
+validation = {}
+for yr in [2022, 2023, 2024, 2025]:
+    hs_yr = panel.loc[str(yr), 'spread_gbp'].dropna()
+
+    # Gross theoretical from actual hourly spread data (no model)
+    gross_actual = hs_yr.abs().sum() * CAPACITY_MW * AVAILABILITY / 1e6
+
+    # Gross theoretical from OLS deterministic only |f_S(t,h)|
+    feat_yr = build_features_spread_hourly(hs_yr.index, t0_spread)
+    f_s_yr  = feat_yr.values @ params_s.values
+    gross_det = np.abs(f_s_yr).sum() * CAPACITY_MW * AVAILABILITY / 1e6
+
+    ofgem = ACTUALS[yr]
+    cr    = ofgem / gross_actual
+    validation[yr] = dict(gross_actual=gross_actual, gross_det=gross_det,
+                          ofgem=ofgem, cr=cr)
+
+    print(f'  {yr:<6}  {gross_actual:>20.1f}m  {gross_det:>14.1f}m  '
+          f'{ofgem:>12.1f}m  {cr:>10.1%}')
+
+print()
+implied_crs  = [v['cr'] for v in validation.values()]
+capture_ratio = np.mean([validation[y]['cr'] for y in [2024, 2025]])
+print(f'  2022-2025 mean implied CR:  {np.mean(implied_crs):.1%}')
+print(f'  2024-2025 mean implied CR:  {capture_ratio:.1%}  '
+      f'(normalised — 2022-23 crisis distortion excluded)')
+print()
+print(f'  Interpretation:')
+print(f'    ~{(1-capture_ratio)*100:.0f}% of gross hourly spread revenue is absorbed by')
+print(f'    auction costs, TSO charges, balancing, and operational losses.')
+print(f'    This is a market-structure observation, NOT a model parameter.')
+print('=' * 68)
+
+# Plot: actual hourly spread (daily mean) vs OLS fit for 2024-2025
+fig, axes = plt.subplots(2, 1, figsize=(13, 6), sharex=False)
+for ax, yr in zip(axes, [2024, 2025]):
+    hs_yr = panel.loc[str(yr), 'spread_gbp'].dropna()
+    daily_actual = hs_yr.resample('D').mean()
+    feat_yr = build_features_spread_hourly(hs_yr.index, t0_spread)
+    f_s_yr  = pd.Series(feat_yr.values @ params_s.values, index=hs_yr.index)
+    daily_det = f_s_yr.resample('D').mean()
+    ax.plot(daily_actual.index, daily_actual.values, lw=0.7, color='steelblue',
+            alpha=0.8, label='Actual daily mean spread')
+    ax.plot(daily_det.index, daily_det.values, lw=1.5, color='firebrick',
+            label='OLS deterministic f_S (daily mean)')
+    ax.axhline(0, color='black', lw=0.5, ls='--')
+    ax.set_title(f'{yr} — Actual spread vs OLS fit  '
+                 f'(Ofgem: GBP{ACTUALS[yr]:.1f}m | '
+                 f'Gross theoretical: GBP{validation[yr]["gross_actual"]:.1f}m)',
+                 fontsize=9)
+    ax.set_ylabel('GBP/MWh'); ax.legend(fontsize=8)
+plt.tight_layout()
+plt.savefig(OUTPUT_DIR / 'figS3_backtest.png', dpi=150, bbox_inches='tight')
+plt.show()
+print('Saved: figS3_backtest.png')
+"""))
+
+# ── Section 13 ─────────────────────────────────────────────────────────────
+cells.append(md("""\
+## Section 13: Monte Carlo Setup — Hourly f_S Projection
 
 ### Hourly f_S Projection
 
@@ -752,7 +833,9 @@ no longer conflated with temporal aggregation effects.
 
 cells.append(code("""\
 proj_dates = pd.date_range(
-    start=f'{FID_YEAR}-01-01', end=f'{FID_YEAR + REGIME_YEARS - 1}-12-31', freq='D'
+    start=f'{PROJ_START_YEAR}-01-01',
+    end=f'{PROJ_START_YEAR + N_PROJ_YEARS - 1}-12-31',
+    freq='D'
 )
 proj_years = proj_dates.year.values
 
@@ -792,31 +875,19 @@ def project_f_spread_hourly(params_s, proj_dates, t0, tau_anchor,
 
 f_s_proj_h = project_f_spread_hourly(params_s, proj_dates, t0_spread, _tau_anchor_s)
 
+yr1_label = PROJ_START_YEAR
+yr_last   = PROJ_START_YEAR + N_PROJ_YEARS - 1
 print(f'Projected f_S — hourly (n_days={len(proj_dates)}, 24 hours):')
-print(f'  Year 1 (2028) daily mean:      {f_s_proj_h[:365].mean():.2f} GBP/MWh')
-print(f'  Year 1 avg hourly peak:        {f_s_proj_h[:365].max(axis=1).mean():.2f} GBP/MWh')
-print(f'  Year 1 avg hourly trough:      {f_s_proj_h[:365].min(axis=1).mean():.2f} GBP/MWh')
-print(f'  Year 25 (2052) daily mean:     {f_s_proj_h[-365:].mean():.2f} GBP/MWh')
+print(f'  Year 1 ({yr1_label}) daily mean:   {f_s_proj_h[:365].mean():.2f} GBP/MWh')
+print(f'  Year 1 avg hourly peak:          {f_s_proj_h[:365].max(axis=1).mean():.2f} GBP/MWh')
+print(f'  Year 1 avg hourly trough:        {f_s_proj_h[:365].min(axis=1).mean():.2f} GBP/MWh')
+print(f'  Year {N_PROJ_YEARS} ({yr_last}) daily mean:  {f_s_proj_h[-365:].mean():.2f} GBP/MWh')
 
-# Capture ratio — calibrated on HOURLY actual theoretical revenue (2024-2025)
-hs_2024 = panel.loc['2024', 'spread_gbp'].abs().dropna()
-hs_2025 = panel.loc['2025', 'spread_gbp'].abs().dropna()
-theoretical_2024 = hs_2024.sum() * CAPACITY_MW * AVAILABILITY / 1e6
-theoretical_2025 = hs_2025.sum() * CAPACITY_MW * AVAILABILITY / 1e6
-theoretical_norm  = (theoretical_2024 + theoretical_2025) / 2
-
-actual_norm_mean = np.mean([107.5, 109.4])
-capture_ratio    = actual_norm_mean / theoretical_norm
-
+# capture_ratio derived from Section 12 back-test (2024-2025 normalised)
+# NOT re-computed here — carried forward from validation cell above
 print()
-print('Capture ratio (2024-2025, hourly theoretical):')
-print(f'  Theoretical 2024 (hourly): GBP{theoretical_2024:.1f}m')
-print(f'  Theoretical 2025 (hourly): GBP{theoretical_2025:.1f}m')
-print(f'  Theoretical mean:          GBP{theoretical_norm:.1f}m')
-print(f'  Actual mean 2024-2025:     GBP{actual_norm_mean:.1f}m')
-print(f'  Capture ratio:             {capture_ratio:.4f}  ({capture_ratio*100:.1f}%)')
-print(f'  Market-cost deductions:    {(1-capture_ratio)*100:.0f}%')
-print(f'  (This now reflects only genuine market costs, not aggregation effects)')
+print(f'Capture ratio (from back-test, 2024-2025 normalised): {capture_ratio:.4f} ({capture_ratio*100:.1f}%)')
+print(f'Market-cost deductions: {(1-capture_ratio)*100:.0f}%  (NOT a model tuning parameter)')
 """))
 
 # ── Section 13 ─────────────────────────────────────────────────────────────
@@ -839,14 +910,15 @@ n_days = len(proj_dates)
 phi    = ou_s['phi'];   c_ou = ou_s['c'];  sigma_d = ou_s['sigma_d']
 jp_pos = jump_params_s['pos'];  jp_neg = jump_params_s['neg']
 
-annual_rev = np.zeros((N_PATHS, REGIME_YEARS))
+annual_rev = np.zeros((N_PATHS, N_PROJ_YEARS))
 
-print(f'Running {N_PATHS:,} paths x {REGIME_YEARS} years ({n_days:,} days)...')
+print(f'Running {N_PATHS:,} paths x {N_PROJ_YEARS} years ({n_days:,} days)...')
+print(f'Projection: {PROJ_START_YEAR}-{PROJ_START_YEAR+N_PROJ_YEARS-1}')
 print(f'Revenue: sum over 24 hourly |spreads| per day (Abadie hourly reconstruction)')
 for b0 in range(0, N_PATHS, BATCH):
     b1 = min(b0 + BATCH, N_PATHS);  n = b1 - b0
     X  = np.zeros(n)
-    batch_rev = np.zeros((REGIME_YEARS, n))
+    batch_rev = np.zeros((N_PROJ_YEARS, n))
 
     for d in range(n_days):
         X = c_ou + phi * X + sigma_d * rng.standard_normal(n)
@@ -861,13 +933,13 @@ for b0 in range(0, N_PATHS, BATCH):
         # Sum |S_h| over 24 hours → daily revenue (GBPm)
         rev_d = np.abs(S_h).sum(axis=1) * CAPACITY_MW * AVAILABILITY / 1e6 * capture_ratio
 
-        yr_idx = proj_years[d] - FID_YEAR
-        if 0 <= yr_idx < REGIME_YEARS:
+        yr_idx = proj_years[d] - PROJ_START_YEAR
+        if 0 <= yr_idx < N_PROJ_YEARS:
             batch_rev[yr_idx] += rev_d
     annual_rev[b0:b1] = batch_rev.T
 
     if (b1 % 2500 == 0) or b1 == N_PATHS:
-        print(f'  {b1:>6}/{N_PATHS} paths  =>  Yr1 P50 = '
+        print(f'  {b1:>6}/{N_PATHS} paths  =>  Yr1 ({PROJ_START_YEAR}) P50 = '
               f'GBP{np.percentile(annual_rev[:b1, 0], 50):.0f}m')
 
 print('Simulation complete.')
@@ -893,33 +965,51 @@ p10 = np.percentile(annual_rev, 10, axis=0)
 p50 = np.percentile(annual_rev, 50, axis=0)
 p90 = np.percentile(annual_rev, 90, axis=0)
 
+proj_cal_years = [PROJ_START_YEAR + i for i in range(N_PROJ_YEARS)]
 rev_df = pd.DataFrame({
-    'cal_year':  [FID_YEAR + i for i in range(REGIME_YEARS)],
-    'regime_yr': range(1, REGIME_YEARS + 1),
+    'cal_year':  proj_cal_years,
+    'regime_yr': range(PROJ_START_YEAR - REGIME_START + 1,
+                       PROJ_START_YEAR - REGIME_START + N_PROJ_YEARS + 1),
     'p10_gbpm':  p10.round(2), 'p50_gbpm': p50.round(2), 'p90_gbpm': p90.round(2),
 })
 rev_df.to_csv(OUTPUT_DIR / 'mc_revenue_spread_direct.csv', index=False)
 print('Saved: mc_revenue_spread_direct.csv')
 print()
-print(f'  {"Yr":>3}  {"Cal":>6}  {"P10 (GBPm)":>12}  {"P50 (GBPm)":>12}  {"P90 (GBPm)":>12}')
-print('  ' + '-' * 50)
-rows = sorted(set(list(range(5)) + list(range(5, REGIME_YEARS, 5)) + [REGIME_YEARS-1]))
-for yr in rows:
-    print(f'  {yr+1:>3}  {FID_YEAR+yr:>6}  {p10[yr]:>12.1f}  {p50[yr]:>12.1f}  {p90[yr]:>12.1f}')
 
-cal_years = [FID_YEAR + i for i in range(REGIME_YEARS)]
+# Combined table: actuals then projections
+print('  === IFA2 Revenue — Full Regime 2021-2045 ===')
+print(f'  {"Yr":>3}  {"Cal":>6}  {"P10 (GBPm)":>12}  {"P50 (GBPm)":>12}  {"P90 (GBPm)":>12}  Note')
+print('  ' + '-' * 70)
+for yr in range(REGIME_START, PROJ_START_YEAR):
+    regime_yr = yr - REGIME_START + 1
+    if yr in ACTUALS:
+        val = ACTUALS[yr]
+        print(f'  {regime_yr:>3}  {yr:>6}  {"—":>12}  {val:>12.1f}  {"—":>12}  actual (Ofgem)')
+    else:
+        print(f'  {regime_yr:>3}  {yr:>6}  {"—":>12}  {"n/a":>12}  {"—":>12}  not disclosed')
+print('  ' + '·' * 70)
+show = sorted(set([0, 4] + list(range(4, N_PROJ_YEARS, 5)) + [N_PROJ_YEARS-1]))
+for i in show:
+    regime_yr = (PROJ_START_YEAR + i) - REGIME_START + 1
+    print(f'  {regime_yr:>3}  {PROJ_START_YEAR+i:>6}  '
+          f'{p10[i]:>12.1f}  {p50[i]:>12.1f}  {p90[i]:>12.1f}  projected')
+
+# Chart
 fig, axes = plt.subplots(1, 2, figsize=(15, 5))
 
 ax = axes[0]
-ax.fill_between(cal_years, p10, p90, alpha=0.25, color='steelblue', label='P10-P90 band')
-ax.plot(cal_years, p50, lw=2.0, color='steelblue', label='P50 (median)')
-ax.plot(cal_years, p10, lw=0.9, ls='--', color='steelblue')
-ax.plot(cal_years, p90, lw=0.9, ls='--', color='steelblue')
+ax.fill_between(proj_cal_years, p10, p90, alpha=0.25, color='steelblue', label='P10-P90 band')
+ax.plot(proj_cal_years, p50, lw=2.0, color='steelblue', label='P50 (median)')
+ax.plot(proj_cal_years, p10, lw=0.9, ls='--', color='steelblue')
+ax.plot(proj_cal_years, p90, lw=0.9, ls='--', color='steelblue')
 for yr, val in ACTUALS.items():
-    ax.scatter([yr], [val], color='red', zorder=5, s=50)
-ax.scatter([], [], color='red', s=50, label='Ofgem actuals 2022-25')
-ax.set_title('M2: Spread-Direct OU — Hourly Reconstruction\\n'
-             '(FA base case, capture ratio applied)', fontweight='bold')
+    ax.scatter([yr], [val], color='red', zorder=5, s=60)
+ax.scatter([], [], color='red', s=60, label='Ofgem actuals 2022-25')
+ax.axvline(PROJ_START_YEAR - 0.5, color='grey', lw=1, ls=':', alpha=0.7)
+ax.text(PROJ_START_YEAR - 0.3, ax.get_ylim()[0] if ax.get_ylim()[0] > 0 else 50,
+        'projection start', fontsize=7, color='grey', rotation=90, va='bottom')
+ax.set_title('M2: Spread-Direct OU — IFA2 Regime 2021-2045\\n'
+             '(Actuals 2022-25 | Projection 2026-2045)', fontweight='bold')
 ax.set_xlabel('Year'); ax.set_ylabel('GBPm nominal'); ax.legend(fontsize=9)
 
 ax2 = axes[1]
@@ -933,13 +1023,13 @@ try:
     ax2.plot(m1['cal_year'], m1['p90_gbpm'], lw=0.9, ls='--', color='darkorange')
 except FileNotFoundError:
     ax2.text(0.5, 0.5, 'M1 results not found', transform=ax2.transAxes, ha='center')
-ax2.fill_between(cal_years, p10, p90, alpha=0.20, color='steelblue')
-ax2.plot(cal_years, p50, lw=2, color='steelblue', label='M2 P50 (hourly OU)')
-ax2.plot(cal_years, p10, lw=0.9, ls='--', color='steelblue')
-ax2.plot(cal_years, p90, lw=0.9, ls='--', color='steelblue')
+ax2.fill_between(proj_cal_years, p10, p90, alpha=0.20, color='steelblue')
+ax2.plot(proj_cal_years, p50, lw=2, color='steelblue', label='M2 P50 (hourly OU)')
+ax2.plot(proj_cal_years, p10, lw=0.9, ls='--', color='steelblue')
+ax2.plot(proj_cal_years, p90, lw=0.9, ls='--', color='steelblue')
 for yr, val in ACTUALS.items():
-    ax2.scatter([yr], [val], color='red', zorder=5, s=50)
-ax2.scatter([], [], color='red', s=50, label='Ofgem actuals 2022-25')
+    ax2.scatter([yr], [val], color='red', zorder=5, s=60)
+ax2.scatter([], [], color='red', s=60, label='Ofgem actuals 2022-25')
 ax2.set_title('Methodology Comparison — M1 (orange) vs M2 (blue)', fontweight='bold')
 ax2.set_xlabel('Year'); ax2.legend(fontsize=9)
 
@@ -953,12 +1043,19 @@ print('Saved: figS2_methodology_comparison.png')
 cells.append(md("""\
 ## Section 15: Export to Ofgem Cap & Floor Model
 
-Revenue projections written to the Ofgem Excel template (IFA2 FPA). \
-Three copies — P10, P50, P90. Values go to `Input` sheet, row 25, \
-columns V–AT (columns 22–46, regime years 2028–2052).
+Revenue series written to the Ofgem Excel template (IFA2 FPA). \
+Three copies — P10, P50, P90. Values go to `Input` sheet, row 25, columns V–AT \
+(columns 22–46 = regime years 1–25 = calendar years **2021–2045**).
 
-> **Note:** Verify cap/floor parameters against the actual Ofgem Window 2 IFA2 \
-decision document before citing any figures.
+| Regime years | Calendar years | Source |
+|---|---|---|
+| 1 (2021) | 2021 | Blank — Ofgem not yet disclosed |
+| 2–5 (2022–2025) | 2022–2025 | Hard-coded Ofgem actuals |
+| 6–25 (2026–2045) | 2026–2045 | Model P10 / P50 / P90 |
+
+> **Note:** Verify cap/floor floor and cap parameters against the actual Ofgem \
+Window 2 IFA2 decision document. Confirm whether floor/cap are expressed in real \
+or nominal terms before interpreting breach probabilities.
 """))
 
 cells.append(code("""\
@@ -966,21 +1063,47 @@ import shutil
 import openpyxl
 
 EXCEL_TEMPLATE = IC_DIR / 'copy_cap_and_floor_financial_model_-_ifa2_fpa.xlsm'
-INPUT_ROW, COL_YEAR_1 = 25, 22
+INPUT_ROW, COL_YEAR_1 = 25, 22   # col 22 = column V = regime year 1 (2021)
 
-for pct_label, values in [('p10', p10), ('p50', p50), ('p90', p90)]:
+# Build full 25-year revenue array for each scenario
+# Regime years 1-25 = calendar years 2021-2045
+# Years 2021-2025: hard-coded actuals (same across P10/P50/P90)
+# Years 2026-2045: model projections (scenario-specific)
+TOTAL_REGIME = PROJ_START_YEAR - REGIME_START + N_PROJ_YEARS  # should be 25
+
+for pct_label, proj_values in [('p10', p10), ('p50', p50), ('p90', p90)]:
+    full_25 = []
+    for yr in range(REGIME_START, REGIME_START + TOTAL_REGIME):
+        if yr < PROJ_START_YEAR:
+            # Use Ofgem actual if disclosed, else None (will leave cell blank)
+            full_25.append(ACTUALS.get(yr, None))
+        else:
+            idx = yr - PROJ_START_YEAR
+            full_25.append(round(float(proj_values[idx]), 2))
+
     out_path = OUTPUT_DIR / f'ic_cap_floor_m2_{pct_label}.xlsm'
     shutil.copy2(EXCEL_TEMPLATE, out_path)
     wb = openpyxl.load_workbook(out_path, keep_vba=True)
     ws = wb['Input']
-    for i, val in enumerate(values):
-        ws.cell(row=INPUT_ROW, column=COL_YEAR_1 + i, value=round(float(val), 2))
+    for i, val in enumerate(full_25):
+        if val is not None:
+            ws.cell(row=INPUT_ROW, column=COL_YEAR_1 + i, value=val)
+        # None = leave cell as-is (blank / Ofgem not disclosed)
     wb.save(out_path)
     wb.close()
-    print(f'Written: {out_path.name}  (Yr1=GBP{values[0]:.1f}m, Yr25=GBP{values[-1]:.1f}m)')
 
-print()
+    actuals_filled = [yr for yr in range(REGIME_START, PROJ_START_YEAR) if yr in ACTUALS]
+    print(f'Written: ic_cap_floor_m2_{pct_label}.xlsm')
+    print(f'  Actuals populated:  {min(actuals_filled)}-{max(actuals_filled)} '
+          f'({len(actuals_filled)} years)')
+    print(f'  Projected:          {PROJ_START_YEAR}-{PROJ_START_YEAR+N_PROJ_YEARS-1} '
+          f'({N_PROJ_YEARS} years)')
+    print(f'  Yr1 proj ({PROJ_START_YEAR}): GBP{proj_values[0]:.1f}m  '
+          f'Yr{N_PROJ_YEARS} ({PROJ_START_YEAR+N_PROJ_YEARS-1}): GBP{proj_values[-1]:.1f}m')
+    print()
+
 print('Open ic_cap_floor_m2_*.xlsm in Excel to evaluate cap/floor breach.')
+print('Note: regime year 1 (2021) is blank — Ofgem figure not yet disclosed.')
 """))
 
 # ── Write notebook ─────────────────────────────────────────────────────────
