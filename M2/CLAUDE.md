@@ -1,114 +1,100 @@
-# IFA2 Interconnector — Spread-Direct OU Model
+# CLAUDE.md — IFA2 Spread-Direct OU Model
 
-## Purpose
+This file provides guidance to Claude Code when working in this directory.
 
-Equity valuation of IFA2 (1 GW GB–France HVDC) under Ofgem Cap & Floor (Window 1 PCR).
-The model simulates 25-year hourly revenues under 10,000 Monte Carlo paths and computes
-floor/cap breach probabilities against the PCR decision schedule.
+## Working File
 
-**Working file:** `IC_spread_direct_v2.ipynb`
-**Output directory:** `/Users/aadesh/Documents/IC/M2/`
+`IC_spread_direct_v2.ipynb` — run all sections sequentially; each depends on prior outputs.
+Python 3.11 (Homebrew): `/opt/homebrew/bin/python3.11`
+Output directory: `/Users/aadesh/Documents/IC/M2/`
 
 ---
 
-## Model Structure
+## Section Map
 
-Sections run sequentially; each section depends on outputs from prior ones.
-
-| Section | Purpose |
-|---------|---------|
-| 1–3 | Config, data load, hourly panel construction (GB/FR prices + FX) |
-| 4–5 | Descriptive stats, ADF tests, exploratory charts |
-| 6–9 | OLS deterministic component f_S(t,h) estimation |
-| 10 | Jump detection (Cartea & González-Pedraz iterative filter) |
-| 11 | OU + jump mean-reversion NLS estimation |
-| 12 | Rolling out-of-sample back-test → capture ratio |
-| 13 | MC setup: f_S projection (tau-frozen at anchor date) |
-| 14 | Annex M price path parsing + spread adjustment arrays |
-| 15 | Monte Carlo simulation (10,000 paths × 20 years) |
-| 16 | Revenue tables and fan charts (three scenarios) |
-| 17 | Export revenues → PCR decision Excel model |
-| 18 | Accounts analysis — revenue waterfall vs audited financials |
-| 19 | Cap/floor breach analysis from PCR decision schedule |
-| 21 | Window 3 PCR comparison (2024-CPIH-real basis) |
-| 22 | Equity returns — annual FCFE yield and IRR for W1 and W3 |
-
-→ See [`methodology.md`](methodology.md) for model equations and parameter choices.
-→ See [`data.md`](data.md) for data sources, file paths, and conventions.
+| §  | Purpose | Key outputs |
+|----|---------|-------------|
+| 1–2 | Config + data load | `panel` (hourly GB/FR/spread), `ACTUALS`, `CFFM2_RPIt` |
+| 3 | Cleaning & alignment | Aligned hourly panel, gap-filled (<4 h linear, else drop) |
+| 4–5 | Descriptive stats + EDA | ADF tests, spread distribution, against-price flow analysis |
+| 6–9 | OLS f_S estimation | `params_spread`, `hourly_spread_resid`, `proj_dates`, `fs_proj` |
+| 10 | Jump detection | `jump_dates`, `jump_cleaned` (daily residual ex-jumps), `jump_params` |
+| 11 | OU+jump NLS | `ou_s`: phi, kappa, sigma_d, c, jump beta/lambda per quarter |
+| 12 | Back-test | `CAPTURE_RATIO` (mean audited turnover / simulated gross over test years) |
+| 13 | MC f_S projection | `fs_hourly_proj` (hourly deterministic shape, tau frozen) |
+| 14 | Annex M scenarios | `adj_df`: annual spread delta per scenario vs panel anchor |
+| 15 | Monte Carlo | `annual_rev` [N_PATHS × N_PROJ_YEARS] 2016/17-real £m; `p10`, `p50`, `p90` |
+| 16 | Revenue tables + charts | Fan charts, scenario P50 comparison |
+| 17 | Export → W1 Excel | `ifa2_pcr_p{10,50,90}.xlsm` written to OUTPUT_DIR |
+| 18 | Accounts analysis | Revenue waterfall vs audited ACTUALS; RAV reconstruction |
+| 19 | W1 breach analysis | Annual and 5-yr NPV cap/floor breach probabilities |
+| 21 | W3 breach analysis | Same as §19 but in 2024-CPIH-real; exports W3 xlsm copies |
+| 22 | Equity returns | Annual FCFE yield, NI/FCFE IRR for W1 and W3; `equity_returns_fcfe.png` |
+| 20 | Summary | Markdown narrative only — no computed outputs |
 
 ---
 
 ## Key Design Choices
 
-**Spread modelled directly** (not log-prices). Revenue = |S_t| × capacity × availability
-× capture ratio. Avoids Jensen's inequality bias that inflated revenues in the log-price
-approach.
+**Spread modelled directly** (GB − FR in GBP/MWh), not log-prices. Eliminates Jensen's
+inequality bias from E[exp(X)] > exp(E[X]) that inflated revenues in the log-price approach.
 
-**Tau frozen at anchor date** in projection. The OLS linear trend is crisis-driven
-(+9.45 GBP/MWh/yr over sample) and must not be extrapolated. f_S is frozen at the
-March 2026 level; the Annex M spread adjustment (Section 14) handles all forward
-price-level changes.
+**Revenue = |spread|** — IFA2 earns whether GB>FR or FR>GB (bidirectional implicit flow).
 
-**Capture ratio** bridges gross spread revenue to net interconnector turnover. Estimated
-out-of-sample from the back-test (Section 12) as audited turnover / simulated gross.
-Accounts for explicit auction mechanism post-Brexit: IFA2 sells capacity in forward
-auctions; the auction clearing price < realised spot spread; the residual is captured
-by traders not IFA2.
+**Tau frozen at projection start.** The OLS linear trend captures the 2022 energy crisis
+price spike (+9.45 GBP/MWh/yr over sample) — extrapolating it would project absurd 2040
+prices. Freeze τ at `ANCHOR_DATE` (Jan 2025); forward price levels handled by Annex M delta.
 
-**No Tobit censoring.** GB–France day-ahead market commits capacity the day before.
-Operators cannot refuse individual hours. The censoring decision unit is the day (or
-auction period), not the hour. Hourly censoring models a decision right that does not exist.
+**Capture ratio (CR)** bridges model gross spread to Ofgem-assessed net revenue. Estimated
+out-of-sample in §12. Not a Tobit/censoring model — IFA2 commits capacity day-ahead and
+cannot refuse individual hours; there is no hourly decision right to censor.
+
+**No Cholesky** — single spread OU process, not bivariate GB/FR. Correlation structure
+is implicitly embedded in the historical spread residuals.
+
+**Tax = 25%** applied to EBIT (current UK corporation tax rate). FCFE = NI + Dep − RplCap.
 
 ---
 
 ## Regulatory Framework
 
-### Window 1 (PCR decision)
+### Window 1 — `iFA2CFFM2_PCR_decision.xlsm`
 
-Revenue inputs go to:
-- File: `iFA2CFFM2_PCR_decision.xlsm` (authoritative Ofgem model)
-- Sheet: `Costs & Revenue`, row 29 (ARt — assessed revenue, £m nominal)
-- Column 16 = operational year 1 (calendar 2021) through column 40 = year 25 (2045)
+| Action | Sheet | Row | Cols | Notes |
+|--------|-------|-----|------|-------|
+| Write ARt (assessed revenue) | `Costs & Revenue` | 29 | 16–40 | Op yr 1–25 (2021–2045); values nominal (real × RPIt) |
+| Read CLt (cap) | `Revenue Adjustment` | 11 | 1–45 | Nominal; deflate by RPIt before breach test |
+| Read FLt (floor) | `Revenue Adjustment` | 12 | 1–45 | Same |
+| Read op year labels | `Revenue Adjustment` | 5 | 1–45 | Map: calendar year = 2020 + op_yr |
+| Read RPIt | `Indexation` | 11 | 1–45 | Row 5 = year label; row 11 = index value |
+| Read ODR | `Assessment` | 13 | — | Real operational discount rate |
+| Read W1 OPEX + Dep | `Allowances Cap` | — | — | For §22; controllable + non-controllable combined |
+| Read Opening RAV + RplCap | `Op RAV` | — | — | For §22; Op RAV yr1 = investment base incl. IDC |
 
-Three copies written (P10 / P50 / P90 scenario revenues). Open in Excel —
-Assessment sheet recalculates cap/floor breach automatically.
+Three output copies: `ifa2_pcr_p10.xlsm`, `ifa2_pcr_p50.xlsm`, `ifa2_pcr_p90.xlsm`.
 
-Section 19 reads cap/floor directly from `Revenue Adjustment` rows 11–12 of the same
-file and computes breach probabilities from the MC distribution.
+### Window 3 — `iFA2CFFM2_PCR_decision_W3.xlsm`
 
-**W1 cap/floor (16/17-RPI-real):** cap = £61.6m, floor = £37.8m.
+| Action | Sheet | Row | Col(s) | Notes |
+|--------|-------|-----|--------|-------|
+| Read PCL | `Inputs` | 25 | I | Preliminary Cap Level (2024-CPIH-real £m) |
+| Read PFL | `Inputs` | 26 | I | Preliminary Floor Level |
+| Read PCAC | `Inputs` | 27 | I | Cap PCA adjustment (can be negative) |
+| Read PCAF | `Inputs` | 28 | I | Floor PCA adjustment |
+| Read ctrl OPEX | `Inputs` | 35 | P–AN | Op yrs 1–25 (2024-CPIH-real £m) |
+| Read non-ctrl OPEX | `Inputs` | 36 | P–AN | Op yrs 1–25 |
+| Write ARt | `Costs & Revenue` | 29 | 16–40 | In 2024-CPIH-real (not nominal) |
+| Write CPIHt | `Inputs` | 145 | 16–40 | CPIHt = CPIH_yr / 132.9 per op year |
 
-### Window 3 (Section 21)
+cap = PCL + PCAC; floor = PFL + PCAF (read fresh from Excel each time parameters change).
+W3 Op RAV sheet absent — W3 RAV approximated as W1_RAV × RPIt / CPIHt in §22.
+Three output copies: `ifa2_w3_pcr_p{10,50,90}.xlsm`.
 
-- File: `iFA2CFFM2_PCR_decision_W3.xlsm` — Inputs sheet
-- **Cap = PCL + PCAC = £71.042m + £3.989m = £75.031m** (2024-CPIH-real, constant)
-- **Floor = PFL + PCAF = £45.604m + £9.136m = £54.740m** (2024-CPIH-real, constant)
-- Corridor = £20.29m
-- Cap return rate: 7.42% real; Floor return rate: 3.55% real
-- OPEX (2024-CPIH-real): controllable from Inputs row 35, non-controllable row 36
-- W3 RAV approximated as W1_RAV × RPIt / CPIHt (Op RAV sheet not in W3 model)
+### Equity Returns (§22) — `IFA2CFFM1_PCR_decision.xlsm`
 
-**W3 breach probabilities (2024-CPIH-real basis, 5-year NPV):**
+W1 OPEX, Dep, RAV, and RplCap arrays are hardcoded in §22 from this file (25 values each,
+op yrs 1–25). Re-extract if the W1 cost model changes. Investment base = Opening Op RAV yr1
+(includes IDC capitalised 2016–2021). W3 OPEX from W3 Inputs rows 35–36 also hardcoded.
 
-| Period | Years | P > W3 Cap | P < W3 Floor |
-|--------|-------|-----------|-------------|
-| P2 | 2025–2029 | 99.8% | 0.0% |
-| P3 | 2030–2034 | 18.2% | 0.0% |
-| P4 | 2035–2039 | 27.6% | 0.0% |
-| P5 | 2040–2044 | 96.6% | 0.0% |
-
-Cap binds heavily in P2/P5; P3/P4 revenues mostly within corridor. Floor never load-bearing at P50.
-
-### Equity Returns (Section 22)
-
-Investment base includes IDC capitalised during 2016–2021 construction (Opening Op RAV yr1).
-FCFE = Net income + Dep − Replacement capex. Tax = 25%.
-
-| Scenario | W1 FCFE IRR (regulated) | W3 FCFE IRR (regulated) |
-|----------|------------------------|------------------------|
-| P50 | 5.90% | 6.39% |
-| P10 | 4.69% | 5.59% |
-| P90 | 6.89% | 6.61% |
-
-W1 investment base: £404m (16/17-real). W3 investment base: ~£558m (2024-CPIH-real, approx).
-Chart output: `equity_returns_fcfe.png`.
+→ See [`methodology.md`](methodology.md) for model equations.
+→ See [`data.md`](data.md) for data sources, file paths, and all config values.
