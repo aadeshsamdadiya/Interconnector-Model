@@ -97,3 +97,6 @@ Data files are not tracked in this repository (large binaries). Download from On
 | `Annex_M_assumptions_growth_price.ods` | DESNZ Annex M (Feb 2026) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQDIVWs9rIeZT5dPxSZQKNrEAfreUhLVIx4Bsq-QempgcR0) |
 | `Annex_M_assumptions_growth_price_EEP2021_2040.ods` | DESNZ Annex M (Oct 2022) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQAu79i8ikCmQ6QFRA7KOTAvAb4nPp7AvcoLq-YmMpNNfvU) |
 | `GUI_NET_CROSS_BORDER_IFA2_combined.csv` | IFA2 physical flows (ENTSO-E) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQBXmytOA31ZSrbq0mcXFPoUAYmlVq7WS9zuvjdQJUgP8PA) |
+| `ic_cap_floor_ifa2_window3.xlsm` | IFA2 Cap & Floor model (Window 3 basis) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQD7wWpXXqPJSITnMg9mASNPASbyiPGfb0JwnpA7vk1lPqg) |
+| `copy_cap_and_floor_financial_model_-_ifa2_fpa.xlsm` | IFA2 Cap & Floor financial model (FPA copy) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQAfdmEzy4wKT4pNVtDk3WC5Aeu9hElOaYSih2aihDPbcXo) |
+| `Modelitem-Window1oldbasis-Window3updatedbasis-Note.csv` | W1 vs W3 basis comparison note | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQAHhnsVGFLBRIlroXl16qztAeU7SQQoJebQqdT4SwPjSfg) |
