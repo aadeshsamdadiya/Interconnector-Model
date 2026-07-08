@@ -2,7 +2,7 @@
 
 Quantitative equity valuation of **IFA2** (1 GW GB–France HVDC interconnector) under Ofgem's **Cap & Floor Window 1 PCR** regulatory regime.
 
-The model simulates 25-year hourly revenues under 10,000 Monte Carlo paths of the GB–France price spread and computes floor/cap breach probabilities across five assessment periods (2025–2044).
+The model simulates 25-year hourly revenues under 10,000 Monte Carlo paths of the GB–France price spread and computes floor/cap breach probabilities across five assessment periods (2025–2045).
 
 ---
 
