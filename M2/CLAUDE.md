@@ -23,7 +23,7 @@ Output directory: `/Users/aadesh/Documents/IC/M2/`
 | 12 | Back-test | `CAPTURE_RATIO` (mean audited turnover / simulated gross over test years) |
 | 13 | MC f_S projection | `fs_hourly_proj` (hourly deterministic shape, tau frozen) |
 | 14 | Annex M scenarios | `adj_df`: annual spread delta per scenario vs panel anchor |
-| 15 | Monte Carlo | `annual_rev` [N_PATHS × N_PROJ_YEARS] 2016/17-real £m; `p10`, `p50`, `p90` |
+| 15 | Monte Carlo | `annual_rev` [N_PATHS × N_PROJ_YEARS] 2016/17-real £m; `p10`, `p50`, `p90`; simulates S_t = f_S + X_t + Y_t |
 | 16 | Revenue tables + charts | Fan charts, scenario P50 comparison |
 | 17 | Export → W1 Excel | `ifa2_pcr_p{10,50,90}.xlsm` written to OUTPUT_DIR |
 | 18 | Accounts analysis | Revenue waterfall vs audited ACTUALS; RAV reconstruction |

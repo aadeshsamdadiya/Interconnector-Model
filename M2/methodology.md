@@ -19,13 +19,18 @@ Applied simultaneously to GB price, FR price (post-FX), and spread. Source: FPA 
 
 ## 1. Spread Decomposition
 
+Following Cartea & González-Pedraz (2012) Eq. 11, the spread decomposes into three additive components:
+
 ```
-S_t = f_S(t, h) + X_t
+S_t = f_S(t, h) + X_t + Y_t
 ```
 
-- **S_t** — hourly GB−FR spread (GBP/MWh); constructed as `GB_price − FR_price_EUR × fx_eur_gbp`, then RPI-deflated (§0 above)
-- **f_S(t, h)** — deterministic seasonal + trend component, estimated by OLS on hourly data
-- **X_t** — stochastic daily OU residual (jump-cleaned)
+- **S_t** — hourly GB−FR spread (GBP/MWh); `GB_price − FR_price_EUR × fx_eur_gbp`, RPI-deflated (§0)
+- **f_S(t, h)** — deterministic seasonal + trend component estimated by OLS on hourly data
+- **X_t** — mean-reverting OU process (zero long-run mean in projection): `dX_t = α(0 − X_t)dt + σ dW_t`
+- **Y_t** — zero-mean pure jump process (mean-reverting between jumps): `Y_t = e^{−β·Δt}·Y_{t-1} + ΔJ⁺_t − ΔJ⁻_t`
+
+X_t and Y_t are estimated separately (§3–4): jump detection identifies Y_t; OU NLS fits X_t on jump-cleaned residuals S̃_t − Y_t. Both are simulated forward in §5.
 
 Revenue per day:
 ```
@@ -77,9 +82,9 @@ f_S(t, h) = b0 + b1·τ + b2·sin(2πτ) + b3·cos(2πτ) + b6·D_t + Σ_{h=0}^{
 
 ---
 
-## 3. Jump Detection (§10)
+## 3. Jump Component Identification — Y_t (§10)
 
-Cartea & González-Pedraz two-pass filter. Applied to **daily-averaged** residuals: hourly OLS residuals aggregated via `resid_h.resample('D').mean()` before any filtering.
+Two-pass filter identifies the jump component Y_t from daily-averaged OLS residuals r_d = S_d − f̂_S(d). Hourly OLS residuals aggregated via `resid_h.resample('D').mean()` before filtering.
 
 **Pass 1 — iterative spike filter (max 20 iterations):**
 1. Compute first differences Δr_d = r_d − r_{d-1} on daily residuals.
@@ -108,9 +113,9 @@ Positive and negative jumps estimated **separately** (each with own β and λ_q)
 
 ---
 
-## 4. OU + Jump NLS Estimation (§11)
+## 4. OU Component Estimation — X_t (§11)
 
-Joint NLS. For each candidate β_yr (jump decay rate, per year):
+Joint NLS recovers X_t = r_d − Y_d (OLS residual minus reconstructed jump component). For each candidate β_yr (jump decay rate, per year):
 
 **Step 1 — reconstruct Y_t:**
 ```python
@@ -153,24 +158,27 @@ Daily Euler scheme. RNG: `np.random.default_rng(RANDOM_SEED)` (modern NumPy API)
 ```python
 rng = np.random.default_rng(RANDOM_SEED)
 for b0 in range(0, N_PATHS, BATCH):
-    X = np.zeros(BATCH)
+    X = np.zeros(BATCH)   # carries X_t + Y_t combined (see note below)
     for d in range(n_days):
         q = proj_dates[d].quarter
+        # X_t: mean-reverting OU diffusion step
         X = c_ou + phi * X + sigma_d * rng.standard_normal(BATCH)
-        # Bidirectional jumps — positive and negative estimated separately:
+        # Y_t: bidirectional compound Poisson jumps (positive and negative separately)
         for jp, sign in [(jp_pos, +1.0), (jp_neg, -1.0)]:
             lam = jp['lam_by_q'][q]
             if lam > 0:
                 X += sign * (rng.random(BATCH) < lam) * rng.exponential(jp['beta'], BATCH)
+        # Reconstruct full spread: S_t = f_S(t,h) + X_t + Y_t
         S_h = f_s_shape[d, :] + spread_level[d] + X[:, np.newaxis]   # (BATCH, 24)
         rev_d = np.abs(S_h).sum(axis=1) * CAPACITY_MW * AVAILABILITY / 1e6 * capture_ratio
         annual_rev[yr_idx] += rev_d
 ```
 
-- `f_s_shape[d, h]`: f_S shape with τ=0, demeaned (mean-zero annual shape); shape (n_days, 24)
-- `spread_level[d]`: absolute annual spread level from Annex M (2016/17-RPI-real GBP/MWh); see §7
-- `jp['beta']`: exponential scale for jump sizes (output of NLS); `lam_by_q[q]`: arrival rate per day in quarter q
-- Same `rng` instance shared across all three scenarios — differences are purely from `spread_level`, not random variation
+- `X` carries X_t + Y_t combined: Y_t's exponential decay between jumps is absorbed into the next AR(1) step; tracking them separately produces identical paths but requires extra state
+- `f_s_shape[d, h]`: f_S with τ=0, demeaned — the deterministic component; shape (n_days, 24)
+- `spread_level[d]`: absolute annual mean spread from Annex M (2016/17-RPI-real GBP/MWh); see §7
+- `jp['beta']`: exponential scale for jump sizes (NLS output); `lam_by_q[q]`: arrival rate per day in quarter q
+- Same `rng` instance across all three scenarios — differences are purely from `spread_level`, not random variation
 - `annual_rev` stored in 2016/17-RPI-real £m
 
 ---
