@@ -215,3 +215,47 @@ P(NPV > NPV_cap) = mean( NPV_rev[p] > Σ CLt_real[yr] × disc_factor[yr] )
 ```
 CLt and FLt read from `Revenue Adjustment` rows 11–12 (nominal), deflated by RPIt.
 W3 cap and floor are constant in 2024-CPIH-real; compared directly after converting MC revenues.
+
+---
+
+## 10. Equity Returns (§22)
+
+Translates MC revenue paths into annual cash returns to the equity investor under both
+regulatory regimes. All W1 values in 2016/17-RPI-real £m; W3 in 2024-CPIH-real £m.
+
+**Investment base:** Opening operational RAV year 1 from `IFA2CFFM1_PCR_decision.xlsm`
+Op RAV sheet. Includes IDC (interest during construction) capitalised over 2016–2021
+construction period. W3 investment base approximated as W1_RAV × RPIt / CPIHt (W3 Op RAV
+sheet absent from W3 model).
+
+**Annual P&L per regime year:**
+```
+EBIT    = Rev_eff − OPEX − Dep
+NI      = EBIT × (1 − TAX)     if EBIT ≥ 0
+        = EBIT                  if EBIT < 0   (no tax shield on losses)
+FCFE    = NI + Dep − RplCap
+Yld%    = FCFE / Opening_RAV_yr1 × 100
+```
+
+| Variable | Source | Notes |
+|----------|--------|-------|
+| Rev_eff | MC distribution, clipped to [floor, cap] for regulated; raw for uncapped | In regime's own real basis |
+| OPEX | W1: `Allowances Cap` sheet (controllable + non-controllable); W3: `Inputs` rows 35–36 | Hardcoded 25-value arrays in §22 |
+| Dep | W1: `Allowances Cap` sheet (RAV depreciation); W3: W1_Dep × RPIt / CPIHt | Straight-line over regime |
+| RplCap | W1: `Op RAV` sheet replacement capex schedule; W3: W1_RplCap × RPIt / CPIHt | Lumpy; non-zero in specific years only |
+| TAX | 25% (current UK corporation tax rate) | W1 model uses 19% — §22 overrides to 25% |
+
+**Two revenue columns per regime (four columns total):**
+- *Uncapped* — raw MC revenue, no regulatory clipping; shows market value
+- *Regulated* — clipped to [floor, cap]; shows what IFA2 actually receives under the regime
+
+**IRR calculation:**
+```
+cashflows = [−Opening_RAV_yr1, FCFE_yr1, FCFE_yr2, ..., FCFE_yr25]
+IRR = r  such that  NPV(cashflows, r) = 0
+```
+Computed separately for FCFE and NI, and for uncapped vs regulated, per scenario (P10/P50/P90).
+Uses `numpy_financial.irr` with bisection fallback.
+
+**Yield %** (annual, not IRR) shows cash returned per £ invested each year — useful for
+investors assessing annual distributable cash rather than terminal-value IRR.
