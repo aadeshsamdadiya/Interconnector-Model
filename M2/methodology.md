@@ -42,8 +42,10 @@ f_S(t, h) = b0 + b1·τ + b2·sin(2πt) + b3·cos(2πt) + b4·D_t + Σ_{h=1}^{23
 - Hour×season interactions: not significant after Fourier terms included
 - Per-country OLS (GB and FR separately): replaced by direct spread OLS to avoid Jensen's bias
 
-**Projection:** τ frozen at `ANCHOR_DATE = 2025-01-01`. `PROJ_TAU_GROWTH = 0.0` (no trend
-extrapolation). All 24-hour dummies and Fourier terms propagate forward unchanged.
+**Projection (§13):** `tau` set to 0.0 in the feature matrix. f_S then demeaned
+year-by-year so its annual mean = 0 GBP/MWh. f_S carries only the within-year shape
+(Fourier harmonics, hour dummies, weekend dummy). Annex M delta is the sole source of
+the annual spread level. OU process X_t mean-reverts to c_ou (≈ 0).
 
 ---
 

@@ -41,9 +41,12 @@ inequality bias from E[exp(X)] > exp(E[X]) that inflated revenues in the log-pri
 
 **Revenue = |spread|** — IFA2 earns whether GB>FR or FR>GB (bidirectional implicit flow).
 
-**Tau frozen at projection start.** The OLS linear trend captures the 2022 energy crisis
-price spike (+9.45 GBP/MWh/yr over sample) — extrapolating it would project absurd 2040
-prices. Freeze τ at `ANCHOR_DATE` (Jan 2025); forward price levels handled by Annex M delta.
+**Tau zeroed in projection, f_S demeaned.** The OLS linear trend captures the 2022 energy
+crisis spike (+9.45 GBP/MWh/yr) and must not be extrapolated. In §13, `tau` is set to 0.0
+and f_S is demeaned year-by-year (annual mean forced to ~0 GBP/MWh). f_S then carries only
+the within-year shape: Fourier seasonality, hour dummies, weekend dummy. Annex M delta
+(`spread_level[d]` in §15) is the sole source of the annual spread level in projection.
+OU process X_t mean-reverts to c_ou (≈ 0).
 
 **Capture ratio (CR)** bridges model gross spread to Ofgem-assessed net revenue. Estimated
 out-of-sample in §12. Not a Tobit/censoring model — IFA2 commits capacity day-ahead and
