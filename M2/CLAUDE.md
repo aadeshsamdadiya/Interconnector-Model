@@ -41,12 +41,26 @@ inequality bias from E[exp(X)] > exp(E[X]) that inflated revenues in the log-pri
 
 **Revenue = |spread|** — IFA2 earns whether GB>FR or FR>GB (bidirectional implicit flow).
 
+**Two-stage price basis pipeline.** Historical prices (nominal) are deflated to 2016/17-RPI-real
+before OLS using `_RPI_1617 / _HIST_RPI[yr]` (see `data.md §5`). Annex M projections are in
+2024-GDP-real (not CPI-real) and require a second conversion: `adj_t = GDP_cum_t × RPI_1617 / RPI_t`
+(see `data.md §2`). Skipping either step puts the spread in the wrong price basis relative to cap/floor.
+
 **Tau zeroed in projection, f_S demeaned.** The OLS linear trend captures the 2022 energy
 crisis spike (+9.45 GBP/MWh/yr) and must not be extrapolated. In §13, `tau` is set to 0.0
 and f_S is demeaned year-by-year (annual mean forced to ~0 GBP/MWh). f_S then carries only
-the within-year shape: Fourier seasonality, hour dummies, weekend dummy. Annex M delta
-(`spread_level[d]` in §15) is the sole source of the annual spread level in projection.
+the within-year shape: Fourier seasonality, hour dummies, weekend dummy. Annex M
+`spread_level[d]` in §15 is the **absolute** annual mean spread (not a delta from an anchor).
 OU process X_t mean-reverts to c_ou (≈ 0).
+
+**Effects-coded hour dummies (sum-to-zero).** H01–H23 columns take +1 when active, −1 when
+hour=23 (the reference hour). `b0` in the OLS is the grand mean of the spread across all 24
+hours — not the H24 baseline. H24 coefficient = −Σ(H01..H23 params). Standard indicator
+coding (0/1) would give different coefficients and a different `b0` interpretation.
+
+**Holiday dummy requires external file.** `D_t` (weekend + public holiday) depends on
+`Fixed_Public_Holidays_GB_France.xlsx` (GB and France fixed public holidays by month/day).
+See `data.md §3`.
 
 **Capture ratio (CR)** bridges model gross spread to Ofgem-assessed net revenue. Estimated
 out-of-sample in §12. Not a Tobit/censoring model — IFA2 commits capacity day-ahead and
