@@ -23,8 +23,9 @@ The model simulates 20-year hourly revenues under 10,000 Monte Carlo paths of th
 | 17 | Export revenues → Ofgem PCR Excel model |
 | 18 | Accounts analysis vs audited financials |
 | 19 | Window 1 cap/floor breach analysis |
-| 20 | Summary and interpretation |
 | 21 | Window 3 PCR comparison |
+| 22 | Equity returns — annual FCFE yield, NI and FCFE IRR for W1 and W3 |
+| 20 | Summary and interpretation |
 
 See `M2/methodology.md` for model equations and `M2/data.md` for data sources.
 
@@ -45,14 +46,26 @@ IFA2 is cap-heavy in P2 — early revenues (~£78.5m P50 in 2026) exceed the rea
 
 ### Window 1 vs Window 3
 
-Under Window 3 (CPIH-indexed, 2024 base), the cap is constant at £79.9m in 2024-CPIH-real but does not rise with RPI — creating a second cap-heavy period in P5 (67.3% breach probability vs 1.2% under Window 1).
+Under Window 3 (CPIH-indexed, 2024 base), the cap is constant at £75.03m in 2024-CPIH-real (PCL £71.04m + PCAC £3.99m) and the floor at £54.74m (PFL £45.60m + PCAF £9.14m). The corridor is £20.29m. The cap sits below P50 revenues in P2 and P5; P3/P4 revenues (~£71–74m P50) fall mostly within the corridor. The floor is never load-bearing at P50.
 
-| Period | W1 P > Cap | W3 P > Cap |
-|--------|-----------|-----------|
-| P2 | 76.1% | **87.8%** |
-| P3 | 0.1% | 1.6% |
-| P4 | 0.0% | 3.2% |
-| P5 | 1.2% | **67.3%** |
+| Period | W1 P > Cap | W3 P > Cap | W3 P < Floor |
+|--------|-----------|-----------|-------------|
+| P2 | 76.1% | **99.8%** | 0.0% |
+| P3 | 0.1% | 18.2% | 0.0% |
+| P4 | 0.0% | 27.6% | 0.0% |
+| P5 | 1.2% | **96.6%** | 0.0% |
+
+### Equity Returns (Section 22)
+
+Annual FCFE yield on opening RAV (W1: £404m 16/17-real; W3: ~£558m 2024-CPIH-real). Tax = 25%.
+
+| Scenario | W1 FCFE IRR (uncapped) | W1 FCFE IRR (regulated) | W3 FCFE IRR (uncapped) | W3 FCFE IRR (regulated) |
+|----------|----------------------|------------------------|----------------------|------------------------|
+| P50 | 6.93% | 5.90% | 7.87% | 6.39% |
+| P10 | 5.55% | 4.69% | 6.65% | 5.59% |
+| P90 | 8.40% | 6.89% | 9.20% | 6.61% |
+
+W3 regulated FCFE IRR (6.39% P50) now exceeds W1 (5.90%), as the higher cap (£75.03m) leaves more revenue in the corridor in middle years (P3/P4). Both remain well above the UK Gilt real yield benchmark (~1.8%).
 
 ---
 
