@@ -87,12 +87,13 @@ Under Window 3 (CPIH-indexed, 2024 base), the cap is constant at £79.9m in 2024
 
 ## Data
 
-Data files are not tracked in this repository (large binaries). Required files:
+Data files are not tracked in this repository (large binaries). Download from OneDrive:
 
-| File | Description |
-|------|-------------|
-| `IC/GB-FR07.xlsx` | GB/FR hourly day-ahead prices + FX (Dec 2021 – Jul 2026) |
-| `IC/iFA2CFFM2_PCR_decision.xlsm` | Ofgem Window 1 PCR model |
-| `IC/iFA2CFFM2_PCR_decision_W3.xlsm` | Ofgem Window 3 PCR model |
-| `~/Downloads/Annex_M_assumptions_growth_price.ods` | DESNZ Annex M (Feb 2026) |
-| `ENTSO-E/GUI_NET_CROSS_BORDER_IFA2_combined.csv` | IFA2 physical flows |
+| File | Description | Link |
+|------|-------------|------|
+| `GB-FR07.xlsx` | GB/FR hourly day-ahead prices + FX (Dec 2021 – Jul 2026) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQDg133PG1FdRKv8BkIunqR8AUsF3k1mhKVryH6gPHFpRTQ) |
+| `iFA2CFFM2_PCR_decision.xlsm` | Ofgem Window 1 PCR model | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQA9utw5ykckTKLWqdzGW3_yAaJ2JYYwnX3cRd_lW5Ch-z8) |
+| `iFA2CFFM2_PCR_decision_W3.xlsm` | Ofgem Window 3 PCR model | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQBNRCOJk2HTQ7J0dQ6oGaQAARHfAL1OeXHcOaBJvHq62I8) |
+| `Annex_M_assumptions_growth_price.ods` | DESNZ Annex M (Feb 2026) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQDIVWs9rIeZT5dPxSZQKNrEAfreUhLVIx4Bsq-QempgcR0) |
+| `Annex_M_assumptions_growth_price_EEP2021_2040.ods` | DESNZ Annex M (Oct 2022) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQAu79i8ikCmQ6QFRA7KOTAvAb4nPp7AvcoLq-YmMpNNfvU) |
+| `GUI_NET_CROSS_BORDER_IFA2_combined.csv` | IFA2 physical flows (ENTSO-E) | [Download](https://1drv.ms/x/c/4f7beaefd2dddda4/IQBXmytOA31ZSrbq0mcXFPoUAYmlVq7WS9zuvjdQJUgP8PA) |
