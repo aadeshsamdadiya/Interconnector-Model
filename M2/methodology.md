@@ -24,23 +24,49 @@ rev_d = Σ_{h=1}^{24} |S_{d,h}| × CAPACITY_MW × AVAILABILITY / 1e6 × CAPTURE_
 
 ## 2. Deterministic Component f_S(t, h)
 
-OLS on all hourly observations (§6–9):
+OLS on all hourly observations (§6–9). **Full specification (all candidate terms):**
 
 ```
-f_S(t, h) = b0 + b1·τ + b2·sin(2πt) + b3·cos(2πt) + b4·D_t + Σ_{h=1}^{23} b_h·H_{h,t}
+f_S(t, h) = b0 + b1·τ
+           + b2·sin(2πt) + b3·cos(2πt)        ← annual harmonics
+           + b4·sin(4πt) + b5·cos(4πt)        ← semi-annual harmonics
+           + b6·D_t
+           + Σ_{h=1}^{23} b_h·H_{h,t}
 ```
 
 | Term | Description |
 |------|-------------|
-| τ | Years since `t0_spread` (first hourly obs); frozen at ANCHOR_DATE in projection |
-| sin(2πt), cos(2πt) | Annual Fourier harmonics (t in years) |
+| τ | Years since `t0_spread` (first hourly obs in sample) |
+| sin(2πt), cos(2πt) | Annual Fourier harmonics; t in fractional years |
+| sin(4πt), cos(4πt) | Semi-annual Fourier harmonics |
 | D_t | Weekend + public holiday dummy (1 = GB or FR non-working day) |
-| H_{h,t} | 23 hourly dummies (h=1..23); H24 implied as −sum of all others |
+| H_{h,t} | 23 hourly dummies (h=1..23); H24 omitted (collinear with constant) |
 
-**Excluded terms (tested, dropped):**
-- Semi-annual harmonics sin(4πt), cos(4πt): cos₂ not significant at 5%; combined R² gain < 0.001
-- Hour×season interactions: not significant after Fourier terms included
-- Per-country OLS (GB and FR separately): replaced by direct spread OLS to avoid Jensen's bias
+**Hypothesis tests (§8) — five tests determine the final specification:**
+
+| Test | H0 | Method | Decision |
+|------|----|--------|----------|
+| 1 | All Fourier terms = 0 jointly | F-test vs model with trend + weekend + hour only | Reject — seasonal variation exists |
+| 2 | Semi-annual terms (sin2, cos2) = 0 jointly | Partial F-test vs annual-only model | Do not reject — drop sin2/cos2 |
+| 3 | All 23 hour dummies = 0 jointly | F-test vs model without hour dummies | Reject — within-day shape highly significant |
+| 4 | AIC/BIC model comparison | Full (annual + semi-annual) vs annual-only + hour | Annual-only preferred by BIC |
+| 5 | Amplitude vs noise floor | √(b2²+b3²) and √(b4²+b5²) vs σ_resid | Semi-annual amplitude small relative to σ_resid |
+
+**Decision on semi-annual terms:** Drop sin(4πt) and cos(4πt) despite sin2 being
+individually significant. Rationale: (a) cos2 not significant; (b) amplitude small
+relative to σ_resid; (c) likely reflects 2022–23 energy crisis asymmetry rather than
+a structural bi-annual pattern; (d) projecting a potentially spurious term over 25 years
+introduces instability. Annual-only model preferred by BIC; sin2 retained would be
+AIC-preferred, but AIC trades off less against overfitting.
+
+**Terms also tested and dropped:** hour×season interactions (not significant once
+Fourier terms included); per-country OLS on GB and FR separately (replaced by direct
+spread OLS to eliminate Jensen's inequality bias).
+
+**Final estimated specification:**
+```
+f_S(t, h) = b0 + b1·τ + b2·sin(2πt) + b3·cos(2πt) + b6·D_t + Σ_{h=1}^{23} b_h·H_{h,t}
+```
 
 **Projection (§13):** `tau` set to 0.0 in the feature matrix. f_S then demeaned
 year-by-year so its annual mean = 0 GBP/MWh. f_S carries only the within-year shape
@@ -110,10 +136,10 @@ for d in range(n_days):
 annual_rev[yr] = sum(rev[d] for d in year yr)
 ```
 
-- Batched: BATCH = 500 paths per loop to manage memory
-- `fs_frozen[d,h]`: f_S shape evaluated with τ = τ_anchor for all projection dates
-- `delta_annex_m[d]`: annual spread-level shift (interpolated from `adj_df`; zero for Reference in base year)
-- Same RNG seed across all three scenarios — differences between scenarios are purely from δ, not noise
+- BATCH = 500 paths per loop to manage memory
+- `fs_frozen[d,h]`: f_S shape with τ=0, demeaned (mean-zero annual shape)
+- `delta_annex_m[d]`: annual spread-level shift from `adj_df`; zero for Reference at anchor year
+- Same RNG seed across scenarios — scenario differences are purely from δ, not noise
 - `annual_rev` stored in 2016/17-RPI-real £m
 
 ---
@@ -121,17 +147,14 @@ annual_rev[yr] = sum(rev[d] for d in year yr)
 ## 6. Capture Ratio (§12)
 
 Rolling out-of-sample back-test over available actual years (currently 2024–2025):
-
 ```
 CR_yr = audited_turnover[yr] / simulated_gross_P50[yr]
 CAPTURE_RATIO = mean(CR_yr over test years)
 ```
-
-**Economic rationale:** Post-Brexit, IFA2 sells interconnector capacity in explicit forward
-auctions (T-1 day and longer). Auction clearing price < realised spot spread; traders
-capture the residual. CR also absorbs TSO charges, balancing costs, and force majeure outages.
-A single stable ratio is preferred over hourly censoring because there is no hourly decision
-right — capacity is committed day-ahead and cannot be withheld hour-by-hour.
+Post-Brexit, IFA2 sells capacity in explicit forward auctions (T-1 day and longer).
+Auction clearing price < realised spot spread; traders capture the residual. CR also
+absorbs TSO charges, balancing costs, and outages. Single ratio preferred over hourly
+censoring — capacity is committed day-ahead; no hourly decision right exists.
 
 ---
 
@@ -143,16 +166,16 @@ right — capacity is committed day-ahead and cannot be withheld hour-by-hour.
 | FFP_Low | Annex M Feb 2026 — FFP_Low sheet | FR Low Surplus nodes |
 | FFP_High | Annex M Feb 2026 — FFP_High sheet | FR High CO₂/Gas nodes |
 
-**GB scaling:** Annex M is in p/kWh real 2024 baseload. Scale factor corrects the
-methodology basis gap vs N2EX day-ahead prices:
+**GB scaling:** Annex M units are p/kWh real 2024 baseload; N2EX is day-ahead GBP/MWh.
+Scale factor corrects the methodology basis gap:
 ```
 gb_scale = mean( panel_actual_GB[yr] / annex_m_reference[yr]  for yr in 2023–2025 )
+gb_proj[yr] = gb_scale × annex_m[yr]
 ```
-2022 excluded (Annex M embeds actual 2022 prices, ratio ≈ 1.0 — no information).
-Scaled GB projection: `gb_proj[yr] = gb_scale × annex_m[yr]`.
+2022 excluded — Annex M embeds actual 2022 prices so the ratio ≈ 1.0 (no signal).
 
 **FR interpolation:** Node values (EUR/MWh real 2025) linearly interpolated between
-published years; converted to GBP at 2024–25 panel average FX rate.
+node years; converted to GBP at 2024–25 panel mean FX rate.
 
 **Spread delta:** `δ[yr] = (gb_proj[yr] − fr_proj_gbp[yr]) − (gb_proj[anchor] − fr_proj_gbp[anchor])`
 Applied as a uniform daily shift to all hours in year yr.
