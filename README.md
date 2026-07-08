@@ -46,14 +46,27 @@ IFA2 is cap-heavy in P2 — early revenues (~£78.5m P50 in 2026) exceed the rea
 
 ### Window 1 vs Window 3
 
-Under Window 3 (CPIH-indexed, 2024 base), the cap is constant at £75.03m in 2024-CPIH-real (PCL £71.04m + PCAC £3.99m) and the floor at £54.74m (PFL £45.60m + PCAF £9.14m). The corridor is £20.29m. The cap sits below P50 revenues in P2 and P5; P3/P4 revenues (~£71–74m P50) fall mostly within the corridor. The floor is never load-bearing at P50.
+Under Window 3 (CPIH-indexed, 2024 base), the cap is constant at £75.03m in 2024-CPIH-real (PCL £71.04m + PCAC £3.99m) and the floor at £54.74m (PFL £45.60m + PCAF £9.14m). Corridor = £20.29m. W3 has broadly similar investment character to W1 — cap-heavy in P2 and P5 when early/late revenues spike above £75m, and corridor-resident in P3/P4 when P50 revenues (~£71–74m) sit within the band. The floor is never load-bearing at P50 in any period.
 
-| Period | W1 P > Cap | W3 P > Cap | W3 P < Floor |
-|--------|-----------|-----------|-------------|
-| P2 | 76.1% | **99.8%** | 0.0% |
-| P3 | 0.1% | 18.2% | 0.0% |
-| P4 | 0.0% | 27.6% | 0.0% |
-| P5 | 1.2% | **96.6%** | 0.0% |
+| Period | Years | P50 NPV (2024-CPIH-real) | W1 P > Cap | W3 P > Cap | W3 P < Floor |
+|--------|-------|--------------------------|-----------|-----------|-------------|
+| P2 | 2025–2029 | £387.2m | 76.1% | **99.8%** | 0.0% |
+| P3 | 2030–2034 | £333.0m | 0.1% | 18.2% | 0.0% |
+| P4 | 2035–2039 | £338.0m | 0.0% | 27.6% | 0.0% |
+| P5 | 2040–2044 | £377.7m | 1.2% | **96.6%** | 0.0% |
+
+W3 NPV per 5-yr period: cap = £347.7m, floor = £253.7m.
+
+### Annual P50 Revenue vs Cap/Floor (2024-CPIH-real £m)
+
+| Year | W3 Cap | W3 Floor | P50 Revenue | P > W3 Cap | P < W3 Floor |
+|------|--------|---------|-------------|-----------|-------------|
+| 2026 | £75.0m | £54.7m | £102.9m | **100%** | 0.0% |
+| 2028 | £75.0m | £54.7m | £81.9m | 82.3% | 0.0% |
+| 2030 | £75.0m | £54.7m | £72.7m | 38.2% | 0.1% |
+| 2035 | £75.0m | £54.7m | £71.3m | 31.6% | 0.2% |
+| 2040 | £75.0m | £54.7m | £75.3m | 51.2% | 0.0% |
+| 2045 | £75.0m | £54.7m | £91.4m | **98.2%** | 0.0% |
 
 ### Equity Returns (Section 22)
 
@@ -65,7 +78,7 @@ Annual FCFE yield on opening RAV (W1: £404m 16/17-real; W3: ~£558m 2024-CPIH-r
 | P10 | 5.55% | 4.69% | 6.65% | 5.59% |
 | P90 | 8.40% | 6.89% | 9.20% | 6.61% |
 
-W3 regulated FCFE IRR (6.39% P50) now exceeds W1 (5.90%), as the higher cap (£75.03m) leaves more revenue in the corridor in middle years (P3/P4). Both remain well above the UK Gilt real yield benchmark (~1.8%).
+W3 regulated FCFE IRR (6.39% P50) exceeds W1 (5.90%) — the higher W3 cap (£75m vs £61.6m W1) allows more revenue retention in the corridor years. Both remain well above the UK Gilt real yield benchmark (~1.8%).
 
 ---
 
