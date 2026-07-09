@@ -188,8 +188,10 @@ for b0 in range(0, N_PATHS, BATCH):
 Rolling out-of-sample back-test over available actual years (currently 2024–2025):
 ```
 CR_yr = audited_turnover[yr] / simulated_gross_P50[yr]
-CAPTURE_RATIO = mean(CR_yr over test years)
+CAPTURE_RATIO = mean(CR_yr over test years)   # = 25.9% (31.8% 2024, 20.0% 2025)
 ```
+
+Outputs: `figS3_backtest.png` (revenue distributions vs actuals) and `fig_cr_backtest.png` (bar chart of implied CR per year with mean line).
 
 Back-test uses **Oct 2022 Annex M** vintage (the only vintage predating both test-year training cutoffs). That vintage is in 2022-GDP-real; rebased to 2016/17-RPI-real using hardcoded GDP growth rates:
 ```python
@@ -229,7 +231,9 @@ gb_proj[yr] = gb_ref[yr] × gb_scale × adj_t[yr]               (2016/17-RPI-rea
 ```
 `panel_actual_GB` values are 2016/17-RPI-real (deflated from nominal). 2022 excluded — Annex M embeds actual 2022 prices so ratio ≈ 1.0 (no signal).
 
-**FR interpolation:** Node values (EUR/MWh; see `data.md §2`) linearly interpolated between node years; multiplied by 2024–25 panel mean FX rate (`fx_eur_gbp_fwd = panel.loc['2024':'2025','fx_eur_gbp'].mean()`); then × adj_t. Extrapolated flat beyond 2040.
+**FR interpolation:** Node values (EUR/MWh; see `data.md §2`) linearly interpolated between node years; multiplied by 2024–25 panel mean FX rate (`fx_eur_gbp_fwd = panel.loc['2024':'2025','fx_eur_gbp'].mean()`); then converted to 2016/17-RPI-real via `_fr_real_1617`. Extrapolated flat beyond 2040.
+
+**FR price basis — `_fr_real_1617` function:** S&P Global EUR/MWh → 2016/17-RPI-real GBP/MWh using `rpi_pub = FPA_RPI[2022]` (= 320.864) as the fixed deflation base. The S&P Global CSV labels 2023+ years as forecast (suffix "F"), implying a 2022 publication date, so RPI_2022 is the appropriate base. Using a smaller denominator (RPI_2022 < RPI_2024 = 341.993) raises FR prices relative to year-specific or 2024-RPI deflation, compressing the modelled spread and making the revenue analysis more conservative.
 
 **Annual spread level — added as absolute mean contribution to MC:**
 ```

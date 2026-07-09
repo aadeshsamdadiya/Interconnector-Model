@@ -16,11 +16,11 @@ Output directory: `/Users/aadesh/Documents/IC/M2/`
 |----|---------|-------------|
 | 1–2 | Config + data load | `panel` (hourly GB/FR/spread), `ACTUALS`, `CFFM2_RPIt` |
 | 3 | Cleaning & alignment | Aligned hourly panel, gap-filled (<4 h linear, else drop) |
-| 4–5 | Descriptive stats + EDA | ADF tests, spread distribution, against-price flow analysis |
+| 4–5 | Descriptive stats + EDA | ADF tests, spread distribution, against-price flow analysis; `fig_seasonal_spread.png` (monthly boxplots), `fig_eda_prices/spread/dist.png` |
 | 6–9 | OLS f_S estimation | `params_spread`, `hourly_spread_resid`, `proj_dates`, `fs_proj` |
 | 10 | Jump detection | `jump_dates`, `jump_cleaned` (daily residual ex-jumps), `jump_params` |
 | 11 | OU+jump NLS | `ou_s`: phi, kappa, sigma_d, c, jump beta/lambda per quarter |
-| 12 | Back-test | `CAPTURE_RATIO` (mean audited turnover / simulated gross over test years) |
+| 12 | Back-test | `CAPTURE_RATIO` (mean audited turnover / simulated gross over test years); `figS3_backtest.png`; `fig_cr_backtest.png` (implied CR bar chart) |
 | 13 | MC f_S projection | `fs_hourly_proj` (hourly deterministic shape, tau frozen) |
 | 14 | Annex M scenarios | `adj_df`: annual spread delta per scenario vs panel anchor |
 | 15 | Monte Carlo | `annual_rev` [N_PATHS × N_PROJ_YEARS] 2016/17-real £m; `p10`, `p50`, `p90`; simulates S_t = f_S + X_t + Y_t |
@@ -45,6 +45,13 @@ inequality bias from E[exp(X)] > exp(E[X]) that inflated revenues in the log-pri
 before OLS using `_RPI_1617 / _HIST_RPI[yr]` (see `data.md §5`). Annex M projections are in
 2024-GDP-real (not CPI-real) and require a second conversion: `adj_t = GDP_cum_t × RPI_1617 / RPI_t`
 (see `data.md §2`). Skipping either step puts the spread in the wrong price basis relative to cap/floor.
+
+**S&P Global FR prices use RPI_2022 as the deflation base.** The S&P Global European Power Price
+CSV labels 2023+ years as forecast (suffix "F"), implying a 2022 publication date. In `_fr_real_1617`,
+the conversion from SP Global EUR/MWh to 2016/17-RPI-real GBP/MWh uses `rpi_pub = FPA_RPI[2022]`
+(= 320.864) — a smaller denominator than using the current year's RPI, which raises FR prices and
+compresses the modelled spread. This makes the analysis more conservative relative to using either
+year-specific or 2024-RPI deflation.
 
 **Tau zeroed in projection, f_S demeaned.** The OLS linear trend captures the 2022 energy
 crisis spike (+9.45 GBP/MWh/yr) and must not be extrapolated. In §13, `tau` is set to 0.0
