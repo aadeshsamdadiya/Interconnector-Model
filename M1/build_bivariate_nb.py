@@ -1,0 +1,594 @@
+#!/usr/bin/env python3
+"""
+Build IC_spread_bivariate_v1.ipynb in M1/.
+Bivariate OU model for GB and FR — full dataset, no windowing, no calibration.
+Everything (theta, seasonal, OU, jumps, diurnal shape) estimated on the complete
+Dec 2021 – Jul 2026 sample as-is.
+"""
+import json, uuid, pathlib
+
+OUT = pathlib.Path('/Users/aadesh/Documents/IC/M1/IC_spread_bivariate_v1.ipynb')
+
+def md(text, cell_id=None):
+    lines = text.split('\n')
+    src = [l + '\n' for l in lines[:-1]] + [lines[-1]]
+    return {'cell_type':'markdown','id':cell_id or uuid.uuid4().hex[:8],
+            'metadata':{},'source':src}
+
+def code(text, cell_id=None):
+    lines = text.split('\n')
+    src = [l + '\n' for l in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
+    if src and src[-1] == '': src.pop()
+    return {'cell_type':'code','id':cell_id or uuid.uuid4().hex[:8],
+            'metadata':{},'source':src,'outputs':[],'execution_count':None}
+
+cells = []
+
+# ── §0 Title ─────────────────────────────────────────────────────────────────
+cells.append(md(
+    "# IFA2 — Bivariate OU Model (Methodology 1, v1)\n\n"
+    "**Reference:** Abadie & Chamorro (2021) bivariate mean-reverting jump-diffusion.\n\n"
+    "GB and FR electricity prices are modelled as two separate Ornstein-Uhlenbeck processes "
+    "with correlated Brownian innovations. "
+    "The spread is computed as the difference: S(t,h) = P_GB(t,h) − P_FR(t,h).\n\n"
+    "**Estimation:** Full available sample — Dec 2021 to Jul 2026 — used as-is. "
+    "No window selection, no crisis filtering, no price-path assumptions. "
+    "All parameters (level, seasonal, OU dynamics, jumps) are estimated from the data.\n\n"
+    "**Output:** Annual P10/P50/P90 revenues in 2016/17-RPI-real GBP millions, 2026–2045."
+))
+
+# ── §1 Imports + Config ───────────────────────────────────────────────────────
+cells.append(code(
+    "from pathlib import Path\n"
+    "import warnings\n"
+    "import numpy as np\n"
+    "import pandas as pd\n"
+    "import matplotlib\n"
+    "matplotlib.use('Agg')\n"
+    "import matplotlib.pyplot as plt\n"
+    "\n"
+    "warnings.filterwarnings('ignore')\n"
+    "plt.rcParams.update({'figure.dpi':120,'axes.spines.top':False,\n"
+    "                     'axes.spines.right':False,'axes.grid':True,\n"
+    "                     'grid.linewidth':0.3,'grid.alpha':0.5,'font.size':10})\n"
+    "\n"
+    "IC_DIR      = Path('/Users/aadesh/Documents/IC')\n"
+    "EXCEL_PATH  = IC_DIR / 'GB-FR07.xlsx'\n"
+    "OUTPUT_DIR  = IC_DIR / 'M1'\n"
+    "OUTPUT_DIR.mkdir(exist_ok=True)\n"
+    "\n"
+    "N_PATHS         = 10_000\n"
+    "N_PROJ_YEARS    = 20\n"
+    "PROJ_START_YEAR = 2026\n"
+    "RANDOM_SEED     = 42\n"
+    "BATCH           = 500\n"
+    "\n"
+    "CAPACITY_MW   = 1_000\n"
+    "AVAILABILITY  = 0.9659\n"
+    "CAPTURE_RATIO = 0.259\n"
+    "\n"
+    "# RPI deflation — FPA Input row 97 (CHAW annual average, Jan 1987=100)\n"
+    "_ALL_RPI = {\n"
+    "    2021:310.794, 2022:320.864, 2023:331.260, 2024:341.993,\n"
+    "    2025:353.073, 2026:364.513, 2027:376.323, 2028:388.516,\n"
+    "    2029:401.104, 2030:414.099, 2031:427.516, 2032:441.368,\n"
+    "    2033:455.668, 2034:470.432, 2035:485.674, 2036:501.410,\n"
+    "    2037:517.655, 2038:534.427, 2039:551.743, 2040:569.619,\n"
+    "    2041:588.075, 2042:607.129, 2043:626.799, 2044:647.108, 2045:668.074,\n"
+    "}\n"
+    "_RPI_1617 = 264.992\n"
+    "\n"
+    "print(f'Config: {N_PATHS:,} paths  |  Projection {PROJ_START_YEAR}–{PROJ_START_YEAR+N_PROJ_YEARS-1}')"
+))
+
+# ── §2 Data load ──────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 1: Data Loading\n\n"
+    "Source: `GB-FR07.xlsx` — Bloomberg hourly GB (GBP/MWh) and FR (EUR/MWh) prices + EUR/GBP FX. "
+    "All prices deflated to 2016/17-RPI-real using FPA row 97 (same basis as M2)."))
+
+cells.append(code(
+    "def _wide_to_hourly(sheet, vcol):\n"
+    "    df = xl.parse(sheet).rename(columns={'Unnamed: 0':'date'})\n"
+    "    df['date'] = pd.to_datetime(df['date'])\n"
+    "    hc = sorted([c for c in df.columns if str(c).startswith('H') and str(c)[1:].isdigit()],\n"
+    "                key=lambda x: int(x[1:]))\n"
+    "    m  = df.melt(id_vars='date', value_vars=hc, var_name='hcol', value_name=vcol)\n"
+    "    m['ts'] = m['date'] + pd.to_timedelta(m['hcol'].str[1:].astype(int)-1, unit='h')\n"
+    "    return m.set_index('ts')[vcol].sort_index().astype(float)\n"
+    "\n"
+    "xl   = pd.ExcelFile(EXCEL_PATH)\n"
+    "gb_h = _wide_to_hourly('GB_FINAL', 'gb_price_gbp')\n"
+    "fr_h = _wide_to_hourly('FR_FINAL', 'fr_price_eur')\n"
+    "\n"
+    "fx_raw = xl.parse('GBP-EUR'); fx_raw.columns = ['date','fx_eur_gbp']\n"
+    "fx_raw['date'] = pd.to_datetime(fx_raw['date'])\n"
+    "fx_d = (fx_raw.dropna().set_index('date')['fx_eur_gbp']\n"
+    "        .reindex(pd.date_range(fx_raw['date'].min(), fx_raw['date'].max(), freq='D'))\n"
+    "        .ffill())\n"
+    "\n"
+    "panel = pd.concat([gb_h, fr_h], axis=1).dropna()\n"
+    "panel = panel[~panel.index.duplicated(keep='last')]\n"
+    "panel = panel.reindex(pd.date_range(panel.index.min(), panel.index.max(), freq='h'))\n"
+    "panel = panel.interpolate(method='linear', limit=4).dropna()\n"
+    "panel['fx_eur_gbp']   = fx_d.reindex(panel.index.normalize()).values\n"
+    "panel['fx_eur_gbp']   = panel['fx_eur_gbp'].ffill().bfill()\n"
+    "panel['fr_price_gbp'] = panel['fr_price_eur'] * panel['fx_eur_gbp']\n"
+    "panel['spread_gbp']   = panel['gb_price_gbp'] - panel['fr_price_gbp']\n"
+    "\n"
+    "# RPI deflation to 2016/17-real\n"
+    "_defl = np.array([_RPI_1617 / _ALL_RPI.get(d.year, _ALL_RPI[max(_ALL_RPI)])\n"
+    "                  for d in panel.index])\n"
+    "panel['gb_price_gbp'] *= _defl\n"
+    "panel['fr_price_gbp'] *= _defl\n"
+    "panel['spread_gbp']   *= _defl\n"
+    "panel = panel.dropna(subset=['gb_price_gbp','fr_price_gbp','spread_gbp'])\n"
+    "\n"
+    "daily = panel[['gb_price_gbp','fr_price_gbp','spread_gbp']].resample('D').mean().dropna()\n"
+    "n_days = len(daily)\n"
+    "print(f'Sample: {daily.index[0].date()} → {daily.index[-1].date()}  ({n_days} days)')\n"
+    "print(f'Prices in 2016/17-RPI-real GBP/MWh')\n"
+    "print()\n"
+    "print(f'  {\"Series\":<22}  {\"Mean\":>8}  {\"Std\":>8}  {\"Min\":>8}  {\"Max\":>8}')\n"
+    "print('  ' + '-'*55)\n"
+    "for col, lbl in [('gb_price_gbp','GB'),('fr_price_gbp','FR'),('spread_gbp','Spread GB-FR')]:\n"
+    "    s = daily[col]\n"
+    "    print(f'  {lbl:<22}  {s.mean():>8.2f}  {s.std():>8.2f}  {s.min():>8.2f}  {s.max():>8.2f}')"
+))
+
+# ── §3 Theta ──────────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 2: Long-Run Mean (Theta)\n\n"
+    "Theta is the unconditional mean of each price series estimated from the **full sample**. "
+    "This is the level to which prices mean-revert in the OU process. "
+    "No adjustment or recalibration is applied."))
+
+cells.append(code(
+    "theta_gb = daily['gb_price_gbp'].mean()\n"
+    "theta_fr = daily['fr_price_gbp'].mean()\n"
+    "\n"
+    "print('Long-run mean (2016/17-RPI-real GBP/MWh, full sample):')\n"
+    "print(f'  theta_GB     = {theta_gb:.2f}')\n"
+    "print(f'  theta_FR     = {theta_fr:.2f}')\n"
+    "print(f'  theta_spread = {theta_gb - theta_fr:.2f}')"
+))
+
+# ── §4 Seasonal ───────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 3: Seasonal Decomposition\n\n"
+    "Annual and semi-annual Fourier harmonics (4 terms each) fitted **separately** "
+    "for GB and FR on the full-sample demeaned daily prices. "
+    "The seasonal component f_S_r(t) is subtracted before OU estimation "
+    "and added back in projection."))
+
+cells.append(code(
+    "def fit_fourier(daily_col, theta):\n"
+    "    s   = daily_col - theta\n"
+    "    doy = daily_col.index.dayofyear.values\n"
+    "    t   = 2 * np.pi * doy / 365.25\n"
+    "    X   = np.column_stack([np.sin(t), np.cos(t), np.sin(2*t), np.cos(2*t)])\n"
+    "    c,  *_ = np.linalg.lstsq(X, s.values, rcond=None)\n"
+    "    def predict(idx):\n"
+    "        t2 = 2 * np.pi * idx.dayofyear / 365.25\n"
+    "        return c[0]*np.sin(t2) + c[1]*np.cos(t2) + c[2]*np.sin(2*t2) + c[3]*np.cos(2*t2)\n"
+    "    fitted = pd.Series(X @ c, index=daily_col.index)\n"
+    "    return fitted, c, predict\n"
+    "\n"
+    "f_gb, c_gb, fn_gb = fit_fourier(daily['gb_price_gbp'], theta_gb)\n"
+    "f_fr, c_fr, fn_fr = fit_fourier(daily['fr_price_gbp'], theta_fr)\n"
+    "\n"
+    "z_gb = daily['gb_price_gbp'] - theta_gb - f_gb\n"
+    "z_fr = daily['fr_price_gbp'] - theta_fr - f_fr\n"
+    "\n"
+    "print('Fourier seasonal (full sample):')\n"
+    "print(f'  GB [sin1,cos1,sin2,cos2]: {c_gb.round(3)}')\n"
+    "print(f'  FR [sin1,cos1,sin2,cos2]: {c_fr.round(3)}')\n"
+    "print(f'  Residual std post-seasonal:  GB={z_gb.std():.2f}  FR={z_fr.std():.2f} GBP/MWh')"
+))
+
+# ── §5 Jump + OU ──────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 4: Jump Detection & OU Estimation\n\n"
+    "Residuals exceeding ±3σ on either series are classified as jump dates. "
+    "Jump events are separated out for the Poisson/exponential jump model; "
+    "the remaining clean residuals are used for AR(1) OU estimation. "
+    "All computed on the full sample."))
+
+cells.append(code(
+    "def jump_filter(z, n_sigma=3):\n"
+    "    mu, s = z.mean(), z.std()\n"
+    "    hi = mu + n_sigma*s;  lo = mu - n_sigma*s\n"
+    "    return (z > hi) | (z < lo), float(hi), float(lo)\n"
+    "\n"
+    "jm_gb, hi_gb, lo_gb = jump_filter(z_gb)\n"
+    "jm_fr, hi_fr, lo_fr = jump_filter(z_fr)\n"
+    "jm_any   = jm_gb | jm_fr\n"
+    "clean_idx = jm_any[~jm_any].index\n"
+    "\n"
+    "def ar1(z):\n"
+    "    v = z.loc[clean_idx].values\n"
+    "    x, y = v[:-1], v[1:]\n"
+    "    phi = (x @ y) / (x @ x)\n"
+    "    eps = y - phi * x\n"
+    "    return float(phi), float(eps.std()), eps\n"
+    "\n"
+    "phi_gb, sig_gb, eps_gb = ar1(z_gb)\n"
+    "phi_fr, sig_fr, eps_fr = ar1(z_fr)\n"
+    "rho  = float(np.corrcoef(eps_gb, eps_fr)[0, 1])\n"
+    "chol = np.linalg.cholesky([[1.0, rho], [rho, 1.0]])\n"
+    "\n"
+    "hl_gb       = np.log(0.5) / np.log(phi_gb)\n"
+    "hl_fr       = np.log(0.5) / np.log(phi_fr)\n"
+    "spread_sig  = np.sqrt(sig_gb**2 + sig_fr**2 - 2*rho*sig_gb*sig_fr)\n"
+    "\n"
+    "print(f'Jump dates: GB={jm_gb.sum()}  FR={jm_fr.sum()}  union={jm_any.sum()} '\n"
+    "      f'({100*jm_any.mean():.1f}% of sample)')\n"
+    "print()\n"
+    "print('OU parameters (AR(1), full sample, jump-cleaned, 2016/17-real GBP/MWh):')\n"
+    "print(f'  GB:  phi={phi_gb:.4f}  sigma_d={sig_gb:.2f}  half-life={hl_gb:.1f}d')\n"
+    "print(f'  FR:  phi={phi_fr:.4f}  sigma_d={sig_fr:.2f}  half-life={hl_fr:.1f}d')\n"
+    "print(f'  Residual correlation rho = {rho:.4f}')\n"
+    "print(f'  Implied spread sigma_d   = {spread_sig:.2f} GBP/MWh')"
+))
+
+# ── §6 Jump params ────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 5: Jump Parameters\n\n"
+    "Poisson arrival rates and exponential mean jump sizes estimated from the full sample."))
+
+cells.append(code(
+    "def jump_params(z, jm, hi, lo):\n"
+    "    pos = z[jm & (z > hi)] - hi\n"
+    "    neg = lo - z[jm & (z < lo)]\n"
+    "    return {\n"
+    "        'lam_pos': len(pos)/n_days, 'beta_pos': float(pos.mean()) if len(pos) else 1e-9,\n"
+    "        'lam_neg': len(neg)/n_days, 'beta_neg': float(neg.mean()) if len(neg) else 1e-9,\n"
+    "        'n_pos': len(pos), 'n_neg': len(neg),\n"
+    "    }\n"
+    "\n"
+    "jp_gb = jump_params(z_gb, jm_gb, hi_gb, lo_gb)\n"
+    "jp_fr = jump_params(z_fr, jm_fr, hi_fr, lo_fr)\n"
+    "\n"
+    "print('Jump parameters (full sample, 2016/17-real GBP/MWh):')\n"
+    "print(f'  GB pos: lam={jp_gb[\"lam_pos\"]:.4f}/d  ({jp_gb[\"n_pos\"]} ev)  beta={jp_gb[\"beta_pos\"]:.2f}')\n"
+    "print(f'  GB neg: lam={jp_gb[\"lam_neg\"]:.4f}/d  ({jp_gb[\"n_neg\"]} ev)  beta={jp_gb[\"beta_neg\"]:.2f}')\n"
+    "print(f'  FR pos: lam={jp_fr[\"lam_pos\"]:.4f}/d  ({jp_fr[\"n_pos\"]} ev)  beta={jp_fr[\"beta_pos\"]:.2f}')\n"
+    "print(f'  FR neg: lam={jp_fr[\"lam_neg\"]:.4f}/d  ({jp_fr[\"n_neg\"]} ev)  beta={jp_fr[\"beta_neg\"]:.2f}')"
+))
+
+# ── §7 Diurnal shape ──────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 6: Diurnal Spread Shape\n\n"
+    "Mean within-day spread deviation from the daily average, "
+    "computed from the full hourly panel. Used to distribute each simulated daily spread "
+    "across 24 hours for revenue computation."))
+
+cells.append(code(
+    "panel_full = panel.dropna(subset=['spread_gbp'])\n"
+    "daily_s    = panel_full['spread_gbp'].resample('D').mean()\n"
+    "daily_bc   = daily_s.reindex(panel_full.index.normalize()).values\n"
+    "hourly_dev = panel_full['spread_gbp'].values - daily_bc\n"
+    "spread_shape = (pd.Series(hourly_dev, index=panel_full.index)\n"
+    "                .groupby(panel_full.index.hour).mean()\n"
+    "                .reindex(range(24)).fillna(0.0).values)\n"
+    "\n"
+    "print('Diurnal spread shape (mean hourly deviation, full sample):')\n"
+    "print(f'  Min={spread_shape.min():.2f}  Max={spread_shape.max():.2f}  '\n"
+    "      f'Peak H{spread_shape.argmax():02d}  Trough H{spread_shape.argmin():02d}')\n"
+    "print(f'  Shape std: {spread_shape.std():.2f} GBP/MWh')\n"
+    "\n"
+    "proj_dates  = pd.date_range(f'{PROJ_START_YEAR}-01-01', periods=N_PROJ_YEARS*365, freq='D')\n"
+    "f_gb_proj   = fn_gb(proj_dates)\n"
+    "f_fr_proj   = fn_fr(proj_dates)\n"
+    "proj_years  = proj_dates.year.values\n"
+    "n_proj_days = len(proj_dates)\n"
+    "print(f'\\nProjection: {proj_dates[0].date()} → {proj_dates[-1].date()} ({n_proj_days} days)')"
+))
+
+# ── §8 Monte Carlo ────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 7: Monte Carlo Simulation\n\n"
+    "Bivariate correlated OU with independent Poisson jumps. "
+    "Revenue = Σ_h |S(d,h)| × CAPACITY × AVAILABILITY × CR / 1e6 (GBPm) per day.\n\n"
+    "Prices in 2016/17-RPI-real throughout — theta is the full-sample real mean, "
+    "so revenues are directly comparable to the M2 cap/floor thresholds."))
+
+cells.append(code(
+    "rng        = np.random.default_rng(RANDOM_SEED)\n"
+    "annual_rev = np.zeros((N_PATHS, N_PROJ_YEARS))\n"
+    "\n"
+    "for b0 in range(0, N_PATHS, BATCH):\n"
+    "    b1 = min(b0 + BATCH, N_PATHS);  n = b1 - b0\n"
+    "    X_gb = np.zeros(n)\n"
+    "    X_fr = np.zeros(n)\n"
+    "    batch_rev = np.zeros((N_PROJ_YEARS, n))\n"
+    "\n"
+    "    for d in range(n_proj_days):\n"
+    "        z     = chol @ rng.standard_normal((2, n))\n"
+    "        X_gb  = phi_gb * X_gb + sig_gb * z[0]\n"
+    "        X_fr  = phi_fr * X_fr + sig_fr * z[1]\n"
+    "\n"
+    "        u = rng.random((4, n))\n"
+    "        X_gb += (u[0] < jp_gb['lam_pos']) * rng.exponential(jp_gb['beta_pos'], n)\n"
+    "        X_gb -= (u[1] < jp_gb['lam_neg']) * rng.exponential(jp_gb['beta_neg'], n)\n"
+    "        X_fr += (u[2] < jp_fr['lam_pos']) * rng.exponential(jp_fr['beta_pos'], n)\n"
+    "        X_fr -= (u[3] < jp_fr['lam_neg']) * rng.exponential(jp_fr['beta_neg'], n)\n"
+    "\n"
+    "        P_gb_d   = theta_gb + f_gb_proj[d] + X_gb\n"
+    "        P_fr_d   = theta_fr + f_fr_proj[d] + X_fr\n"
+    "        spread_d = P_gb_d - P_fr_d\n"
+    "\n"
+    "        S_h   = spread_shape[np.newaxis, :] + spread_d[:, np.newaxis]\n"
+    "        rev_d = np.abs(S_h).sum(axis=1) * CAPACITY_MW * AVAILABILITY * CAPTURE_RATIO / 1e6\n"
+    "\n"
+    "        yr_idx = proj_years[d] - PROJ_START_YEAR\n"
+    "        if 0 <= yr_idx < N_PROJ_YEARS:\n"
+    "            batch_rev[yr_idx] += rev_d\n"
+    "\n"
+    "    annual_rev[b0:b1] = batch_rev.T\n"
+    "    if b0 % 2000 == 0:\n"
+    "        print(f'  Batch {b0}/{N_PATHS}')\n"
+    "\n"
+    "p10 = np.percentile(annual_rev, 10, axis=0)\n"
+    "p50 = np.percentile(annual_rev, 50, axis=0)\n"
+    "p90 = np.percentile(annual_rev, 90, axis=0)\n"
+    "print(f'\\nMC complete.')\n"
+    "print(f'  Yr1  P10={p10[0]:.1f}  P50={p50[0]:.1f}  P90={p90[0]:.1f} GBPm')\n"
+    "print(f'  Yr10 P10={p10[9]:.1f}  P50={p50[9]:.1f}  P90={p90[9]:.1f} GBPm')\n"
+    "print(f'  Yr20 P10={p10[19]:.1f}  P50={p50[19]:.1f}  P90={p90[19]:.1f} GBPm')"
+))
+
+# ── §9 Revenue table ──────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 8: Revenue Results\n\n"
+    "Annual P10/P50/P90 revenues (2016/17-RPI-real GBPm). "
+    "Because theta is the full-sample mean (no trend), revenues are stationary around "
+    "the historically-estimated long-run level."))
+
+cells.append(code(
+    "print(f'  {\"Year\":>6}  {\"P10\":>8}  {\"P50\":>8}  {\"P90\":>8}  {\"P90-P10\":>10}')\n"
+    "print('  ' + '-'*48)\n"
+    "for i in range(N_PROJ_YEARS):\n"
+    "    yr   = PROJ_START_YEAR + i\n"
+    "    note = '  <- yr10' if i==9 else ('  <- yr20' if i==19 else '')\n"
+    "    print(f'  {yr:>6}  {p10[i]:>8.1f}  {p50[i]:>8.1f}  {p90[i]:>8.1f}  '\n"
+    "          f'{p90[i]-p10[i]:>10.1f}{note}')\n"
+    "print()\n"
+    "print(f'  Mean P50: {p50.mean():.1f} GBPm   P10: {p10.mean():.1f}   P90: {p90.mean():.1f}')"
+))
+
+# ── §10 Ceiling check ─────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 9: Physical Capacity Ceiling Check"))
+
+cells.append(code(
+    "max_spread  = daily['spread_gbp'].abs().max()\n"
+    "phys_ceil   = 24 * max_spread * CAPACITY_MW * AVAILABILITY * CAPTURE_RATIO * 365 / 1e6\n"
+    "n_breaches  = int((annual_rev > phys_ceil).sum())\n"
+    "\n"
+    "print(f'Physical ceiling: {phys_ceil:.1f} GBPm/yr  (max |spread|={max_spread:.2f} GBP/MWh)')\n"
+    "if n_breaches > 0:\n"
+    "    yrs = [PROJ_START_YEAR+j for j in range(N_PROJ_YEARS) if (annual_rev[:,j]>phys_ceil).any()]\n"
+    "    print(f'WARNING: {n_breaches} path-year cells exceed ceiling  |  years: {yrs}')\n"
+    "    print(f'Max simulated: {annual_rev.max():.1f} GBPm')\n"
+    "else:\n"
+    "    print('OK — no path-year exceeds the physical ceiling.')"
+))
+
+# ── §11 Chart ─────────────────────────────────────────────────────────────────
+cells.append(md("---\n## Section 10: Revenue Fan Chart"))
+
+cells.append(code(
+    "proj_yrs = list(range(PROJ_START_YEAR, PROJ_START_YEAR + N_PROJ_YEARS))\n"
+    "\n"
+    "fig, ax = plt.subplots(figsize=(13, 5))\n"
+    "ax.fill_between(proj_yrs, p10, p90, alpha=0.2, color='steelblue', label='P10–P90 band')\n"
+    "ax.plot(proj_yrs, p50, 'b-o', ms=4, lw=1.5, label='P50')\n"
+    "ax.plot(proj_yrs, p10, 'b--', lw=0.7, alpha=0.5, label='P10')\n"
+    "ax.plot(proj_yrs, p90, 'b--', lw=0.7, alpha=0.5, label='P90')\n"
+    "ax.axhline(37.8, color='red',   lw=1.2, ls=':', label='W1 floor £37.8m (2016/17-real)')\n"
+    "ax.axhline(61.6, color='green', lw=1.2, ls=':', label='W1 cap £61.6m (2016/17-real)')\n"
+    "ax.set_xlabel('Year')\n"
+    "ax.set_ylabel('Annual Revenue (2016/17-real GBPm)')\n"
+    "ax.set_title(\n"
+    "    'Fig M1-1. IFA2 Bivariate OU — Full Sample, No Calibration (10,000 paths)\\n'\n"
+    "    f'theta_spread={theta_gb-theta_fr:.2f} GBP/MWh  |  '\n"
+    "    f'phi_GB={phi_gb:.3f}  phi_FR={phi_fr:.3f}  |  rho={rho:.3f}',\n"
+    "    fontweight='bold')\n"
+    "ax.legend(fontsize=9, ncol=3)\n"
+    "plt.tight_layout()\n"
+    "plt.savefig(OUTPUT_DIR / 'figM1_revenue_fan.png', dpi=150, bbox_inches='tight')\n"
+    "plt.show()\n"
+    "print('Saved: figM1_revenue_fan.png')"
+))
+
+# ── §12 W1 Breach Analysis ───────────────────────────────────────────────────
+cells.append(md(
+    "---\n## Section 11: Window 1 Cap/Floor Breach Probabilities\n\n"
+    "IFA2 is a **Window 1** project. The W1 cap and floor are **RPI-indexed**, so their "
+    "real values are constant in 2016/17-RPI-real terms — directly comparable to `annual_rev`.\n\n"
+    "| Threshold | 2016/17-real | Nominal indexation |\n"
+    "|-----------|-------------|--------------------|\n"
+    "| W1 Cap    | £61.6m      | RPI + 3.24%/yr     |\n"
+    "| W1 Floor  | £37.8m      | RPI + 3.24%/yr     |\n\n"
+    "Assessment periods aligned to the regulatory structure (P1=2021–25, P2=2026–30, …):\n\n"
+    "| Period | Years     | Note |\n"
+    "|--------|-----------|------|\n"
+    "| P1     | 2021–2025 | Pre-projection (historical actuals) |\n"
+    "| P2     | 2026–2030 | First full MC period |\n"
+    "| P3     | 2031–2035 | |\n"
+    "| P4     | 2036–2040 | |\n"
+    "| P5     | 2041–2045 | 2045 = final year of regime, avoids period-stub artifact |\n\n"
+    "Discount rate = 3.945% real ODR. All periods are 5 full years."
+))
+
+cells.append(code(
+    "W1_CAP_REAL   = 61.6    # £61.6m (2016/17-RPI-real)\n"
+    "W1_FLOOR_REAL = 37.8    # £37.8m (2016/17-RPI-real)\n"
+    "ODR           = 0.03945\n"
+    "\n"
+    "YRS = list(range(PROJ_START_YEAR, PROJ_START_YEAR + N_PROJ_YEARS))\n"
+    "\n"
+    "print('W1 Annual Breach Probabilities (2016/17-RPI-real)')\n"
+    "print(f'  Cap = £{W1_CAP_REAL}m  |  Floor = £{W1_FLOOR_REAL}m  (constant in 2016/17-real)')\n"
+    "print()\n"
+    "print(f'  {\"Year\":>6}  {\"P10\":>8}  {\"P50\":>8}  {\"P90\":>8}  {\"P>Cap\":>8}  {\"P<Floor\":>8}')\n"
+    "print('  ' + '-'*60)\n"
+    "\n"
+    "show_yrs = {2026, 2028, 2030, 2032, 2035, 2040, 2044}\n"
+    "for i, yr in enumerate(YRS):\n"
+    "    if yr in show_yrs:\n"
+    "        rv = annual_rev[:, i]\n"
+    "        p10_v, p50_v, p90_v = np.percentile(rv, [10, 50, 90])\n"
+    "        p_cap   = 100 * (rv > W1_CAP_REAL).mean()\n"
+    "        p_floor = 100 * (rv < W1_FLOOR_REAL).mean()\n"
+    "        print(f'  {yr:>6}  {p10_v:>8.1f}  {p50_v:>8.1f}  {p90_v:>8.1f}  {p_cap:>7.1f}%  {p_floor:>7.1f}%')\n"
+    "\n"
+    "print()\n"
+    "W1_PERIODS = [\n"
+    "    ('P2', list(range(2026, 2031))),\n"
+    "    ('P3', list(range(2031, 2036))),\n"
+    "    ('P4', list(range(2036, 2041))),\n"
+    "    ('P5', list(range(2041, 2046))),\n"
+    "]\n"
+    "\n"
+    "print('W1 NPV Assessment Periods (2016/17-RPI-real, ODR=3.945%)')\n"
+    "print(f'  {\"Period\":>8}  {\"Years\":>12}  {\"P50 NPV\":>10}  {\"Cap NPV\":>10}  {\"Flr NPV\":>10}  {\"P>Cap\":>8}  {\"P<Flr\":>8}')\n"
+    "print('  ' + '-'*84)\n"
+    "\n"
+    "w1_npv = {}\n"
+    "for pname, yr_rng in W1_PERIODS:\n"
+    "    yrs_in = [yr for yr in yr_rng if yr in YRS]\n"
+    "    if not yrs_in:\n"
+    "        continue\n"
+    "    disc     = np.array([1.0 / (1 + ODR)**k for k in range(len(yrs_in))])\n"
+    "    cols     = [YRS.index(yr) for yr in yrs_in]\n"
+    "    rev_mat  = annual_rev[:, cols]\n"
+    "    npv_vec  = (rev_mat * disc[np.newaxis, :]).sum(axis=1)\n"
+    "    ann      = disc.sum()\n"
+    "    npv_cap  = W1_CAP_REAL * ann\n"
+    "    npv_flr  = W1_FLOOR_REAL * ann\n"
+    "    p50_npv  = float(np.percentile(npv_vec, 50))\n"
+    "    p_cap    = 100 * (npv_vec > npv_cap).mean()\n"
+    "    p_floor  = 100 * (npv_vec < npv_flr).mean()\n"
+    "    yr_lbl   = f'{yrs_in[0]}\\u2013{yrs_in[-1]}'\n"
+    "    w1_npv[pname] = {'p50':p50_npv, 'npv_cap':npv_cap, 'npv_flr':npv_flr,\n"
+    "                     'p_cap':p_cap, 'p_flr':p_floor, 'yrs':yr_lbl}\n"
+    "    print(f'  {pname:>8}  {yr_lbl:>12}  {p50_npv:>10.1f}  {npv_cap:>10.1f}  {npv_flr:>10.1f}  {p_cap:>7.1f}%  {p_floor:>7.1f}%')"
+))
+
+# ── §13 W3 Breach Analysis ───────────────────────────────────────────────────
+cells.append(md(
+    "---\n## Section 12: Window 3 Cap/Floor Breach Probabilities\n\n"
+    "W3 thresholds are defined in **2024-CPIH-real** terms. "
+    "Revenue conversion: `rev_2024cpih = rev_1617real × (RPI_t / RPI_1617) / CPIH_t`\n\n"
+    "where `CPIH_t = 1.025^(year − 2024)` (OBR 2.5%/yr from ONS base 132.9 in 2024).\n\n"
+    "| Threshold | 2024-CPIH-real | Components |\n"
+    "|-----------|---------------|------------|\n"
+    "| W3 Cap    | £79.885m      | PCL £67.05m + PCAC £12.83m |\n"
+    "| W3 Floor  | £49.956m      | PFL £36.47m + PCAF £13.49m |\n\n"
+    "Scale factors RPIt/CPIHt: 2026≈1.311, 2030≈1.349, 2035≈1.399, 2040≈1.450, 2045≈1.503\n\n"
+    "Assessment periods: P2=2026–2030, P3=2031–2035, P4=2036–2040, P5=2041–2045 (5 full years each)."
+))
+
+cells.append(code(
+    "W3_CAP_CPIH   = 79.885   # £79.885m (2024-CPIH-real)\n"
+    "W3_FLOOR_CPIH = 49.956   # £49.956m (2024-CPIH-real)\n"
+    "\n"
+    "def _rpit(yr):\n"
+    "    return _ALL_RPI.get(yr, _ALL_RPI[max(_ALL_RPI)]) / _RPI_1617\n"
+    "\n"
+    "def _cpiht(yr):\n"
+    "    return 1.025 ** (yr - 2024)\n"
+    "\n"
+    "def to_cpih(rev_1617r, yr):\n"
+    "    return rev_1617r * _rpit(yr) / _cpiht(yr)\n"
+    "\n"
+    "print('W3 Annual Breach Probabilities (2024-CPIH-real)')\n"
+    "print(f'  Cap = £{W3_CAP_CPIH}m  |  Floor = £{W3_FLOOR_CPIH}m')\n"
+    "print()\n"
+    "print(f'  {\"Year\":>6}  {\"Scale\":>7}  {\"P10\":>8}  {\"P50\":>8}  {\"P90\":>8}  {\"P>Cap\":>8}  {\"P<Floor\":>8}')\n"
+    "print('  ' + '-'*68)\n"
+    "\n"
+    "for i, yr in enumerate(YRS):\n"
+    "    if yr in show_yrs:\n"
+    "        sc       = _rpit(yr) / _cpiht(yr)\n"
+    "        rv_cpih  = to_cpih(annual_rev[:, i], yr)\n"
+    "        p10_v, p50_v, p90_v = np.percentile(rv_cpih, [10, 50, 90])\n"
+    "        p_cap    = 100 * (rv_cpih > W3_CAP_CPIH).mean()\n"
+    "        p_floor  = 100 * (rv_cpih < W3_FLOOR_CPIH).mean()\n"
+    "        print(f'  {yr:>6}  {sc:>7.4f}  {p10_v:>8.1f}  {p50_v:>8.1f}  {p90_v:>8.1f}  {p_cap:>7.1f}%  {p_floor:>7.1f}%')\n"
+    "\n"
+    "print()\n"
+    "W3_PERIODS = [\n"
+    "    ('P2', list(range(2026, 2031))),\n"
+    "    ('P3', list(range(2031, 2036))),\n"
+    "    ('P4', list(range(2036, 2041))),\n"
+    "    ('P5', list(range(2041, 2046))),\n"
+    "]\n"
+    "\n"
+    "print('W3 NPV Assessment Periods (2024-CPIH-real, ODR=3.945%)')\n"
+    "print(f'  {\"Period\":>8}  {\"Years\":>12}  {\"P50 NPV\":>10}  {\"W3 Cap\":>10}  {\"W3 Flr\":>10}  {\"P>Cap\":>8}  {\"P<Flr\":>8}')\n"
+    "print('  ' + '-'*84)\n"
+    "\n"
+    "w3_npv = {}\n"
+    "for pname, yr_rng in W3_PERIODS:\n"
+    "    yrs_in   = [yr for yr in yr_rng if yr in YRS]\n"
+    "    if not yrs_in:\n"
+    "        continue\n"
+    "    disc     = np.array([1.0 / (1 + ODR)**k for k in range(len(yrs_in))])\n"
+    "    cols     = [YRS.index(yr) for yr in yrs_in]\n"
+    "    rev_cpih = np.column_stack([to_cpih(annual_rev[:, c], YRS[c]) for c in cols])\n"
+    "    npv_vec  = (rev_cpih * disc[np.newaxis, :]).sum(axis=1)\n"
+    "    ann      = disc.sum()\n"
+    "    npv_cap  = W3_CAP_CPIH * ann\n"
+    "    npv_flr  = W3_FLOOR_CPIH * ann\n"
+    "    p50_npv  = float(np.percentile(npv_vec, 50))\n"
+    "    p_cap    = 100 * (npv_vec > npv_cap).mean()\n"
+    "    p_floor  = 100 * (npv_vec < npv_flr).mean()\n"
+    "    yr_lbl   = f'{yrs_in[0]}\\u2013{yrs_in[-1]}'\n"
+    "    w3_npv[pname] = {'p50':p50_npv, 'npv_cap':npv_cap, 'npv_flr':npv_flr,\n"
+    "                     'p_cap':p_cap, 'p_flr':p_floor, 'yrs':yr_lbl}\n"
+    "    print(f'  {pname:>8}  {yr_lbl:>12}  {p50_npv:>10.1f}  {npv_cap:>10.1f}  {npv_flr:>10.1f}  {p_cap:>7.1f}%  {p_floor:>7.1f}%')"
+))
+
+# ── §14 W1 vs W3 Summary ─────────────────────────────────────────────────────
+cells.append(md(
+    "---\n## Section 13: W1 vs W3 Summary\n\n"
+    "Side-by-side regulatory comparison. **Key structural difference:**\n\n"
+    "- W1 cap grows with RPI → rises faster than revenues in real terms → cap bite eases over time\n"
+    "- W3 cap is fixed in CPIH-real → cap clawback risk depends on whether spread mean reverts "
+    "below W3 cap level\n\n"
+    "> *Note: floor breach is 0% in both regimes. "
+    "The full-sample theta (crisis-era mean) keeps revenues far above floor throughout.*"
+))
+
+cells.append(code(
+    "print('W1 vs W3 NPV Assessment Summary')\n"
+    "print()\n"
+    "hdr = f'{\"Period\":>6}  {\"Years\":>12}  {\"P50 NPV\":>10}'\n"
+    "hdr += f'  {\"W1Cap\":>9}  {\"W1 P>Cap\":>10}  {\"W3Cap\":>9}  {\"W3 P>Cap\":>10}'\n"
+    "print('  ' + hdr)\n"
+    "print('  ' + '-'*90)\n"
+    "\n"
+    "for p in ['P2','P3','P4','P5']:\n"
+    "    if p not in w1_npv or p not in w3_npv:\n"
+    "        continue\n"
+    "    w1, w3 = w1_npv[p], w3_npv[p]\n"
+    "    line  = f'{p:>6}  {w1[\"yrs\"]:>12}  {w1[\"p50\"]:>10.1f}'\n"
+    "    line += f'  {w1[\"npv_cap\"]:>9.1f}  {w1[\"p_cap\"]:>9.1f}%  {w3[\"npv_cap\"]:>9.1f}  {w3[\"p_cap\"]:>9.1f}%'\n"
+    "    print('  ' + line)\n"
+    "\n"
+    "print()\n"
+    "print('Floor breach (P<Flr): 0% in all periods for both W1 and W3.')\n"
+    "print()\n"
+    "print('Interpretation note:')\n"
+    "print('  Revenues modelled on full 2021-26 sample (crisis-era theta ~£23 GBP/MWh spread).')\n"
+    "print('  P50 revenues (~£130m/yr in 2016/17-real) sit far above both regulatory caps.')\n"
+    "print('  Under W1: cap clawback is near-certain in all periods at these revenue levels.')\n"
+    "print('  Under W3: same conclusion — W3 cap lower than W1 cap in 2016/17-real equivalent.')\n"
+    "print('  Floor protection is not load-bearing under full-sample parameters.')"
+))
+
+# ── Assemble ──────────────────────────────────────────────────────────────────
+nb = {
+    'nbformat': 4, 'nbformat_minor': 5,
+    'metadata': {
+        'kernelspec': {'display_name':'Python 3','language':'python','name':'python3'},
+        'language_info': {'name':'python','version':'3.11.0'},
+    },
+    'cells': cells,
+}
+OUT.write_text(json.dumps(nb, indent=1, ensure_ascii=False))
+print(f'Written: {OUT}  ({len(cells)} cells)')

@@ -115,3 +115,4 @@ op yrs 1–25). Re-extract if the W1 cost model changes. Investment base = Openi
 
 → See [`methodology.md`](methodology.md) for model equations.
 → See [`data.md`](data.md) for data sources, file paths, and all config values.
+→ See [`../M1/CLAUDE.md`](../M1/CLAUDE.md) and [`../M1/methodology.md`](../M1/methodology.md) for the M1 bivariate OU alternative — same regulatory framework, no price-path assumptions.
