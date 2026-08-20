@@ -1,6 +1,6 @@
 # Data Sources — IFA2 Spread-Direct OU Model
 
-All paths are absolute. Data files are not git-tracked (large binaries); download links in `/Users/aadesh/Documents/IC/README.md`.
+All paths are absolute. Core data files (`GB-FR07.xlsx`, ENTSO-E IFA2-filtered CSVs, NTC CSVs) are git-tracked in the IC repo. Raw ENTSO-E full-market exports (14 MB each) are not committed; filtered `_IFA2_only.csv` files and the combined CSV are sufficient to reproduce all flow metrics.
 
 ---
 
@@ -110,11 +110,29 @@ Generated over both historical and projection year ranges.
 
 ---
 
-## 4. ENTSO-E Physical Flows
+## 4. ENTSO-E Physical Flows and NTC Data
 
+**Combined flow file (primary input):**
 Path: `/Users/aadesh/Documents/IC/ENTSO-E/GUI_NET_CROSS_BORDER_IFA2_combined.csv`
+Hourly net cross-border flow (MW), positive = FR→GB. Produced by `filter_ifa2.py` from the annual IFA2-only files below. Used in §5.1 (against-price analysis) and §18 (GCR vs assessed revenue). **Not used in Monte Carlo.**
 
-Hourly net cross-border flow (MW), positive = FR→GB. Used in §5.1 (against-price analysis) and §18 (GCR vs assessed revenue). **Not used in Monte Carlo.**
+**Individual IFA2-filtered annual files** (source for combined CSV):
+```
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202101010000-202201010000_IFA2_only.csv
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202201010000-202301010000_IFA2_only.csv
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202301010000-202401010000_IFA2_only.csv
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202401010000-202501010000_IFA2_only.csv
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202501010000-202601010000_IFA2_only.csv
+ENTSO-E/GUI_NET_CROSS_BORDER_PHYSICAL_FLOWS_202601010000-202701010000_IFA2_only.csv
+```
+Each is filtered from the 14 MB full-market ENTSO-E export by `filter_ifa2.py`. Raw exports are not committed.
+
+**NTC (Net Transfer Capacity) files:**
+```
+M2/IFA2_NTC_FR_out_GBIFA2_in_2021-01-01_to_2026-07-31.csv   ← FR→GB direction
+M2/IFA2_NTC_GBIFA2_out_FR_in_2021-01-01_to_2026-07-31.csv   ← GB→FR direction
+```
+Hourly NTC (MW) from ENTSO-E capacity allocation. Joined to `_df` in §5 to filter NTC=0 hours (no commercial capacity allocated — excluded from SCUWED/UIIU/PWIIU and monetary-loss metrics). NTC is not binary: 1,014 MW (84% of hours), 0 MW (15%), intermediate values (~1%).
 
 ---
 
@@ -272,6 +290,6 @@ All written to `/Users/aadesh/Documents/IC/M2/`:
 |------|---------|
 | `ifa2_pcr_p{10,50,90}.xlsm` | W1 PCR model with P10/P50/P90 revenues in ARt row 29 |
 | `ifa2_w3_pcr_p{10,50,90}.xlsm` | W3 PCR model with revenues in 2024-CPIH-real |
-| `mc_revenue_spread_direct.csv` | P10/P50/P90 annual revenues (2016/17-real £m), 2026–2045 |
+| `mc_revenue_ifa2.csv` | P10/P50/P90 annual revenues (2016/17-real £m), 2026–2045 |
 | `equity_returns_fcfe.png` | Annual FCFE yield chart, W1 and W3 |
 | `fig_*.png` | EDA, methodology comparison, backtest, price trajectory charts |

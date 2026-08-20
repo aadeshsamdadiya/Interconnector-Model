@@ -226,10 +226,11 @@ adj_t = GDP_cum_t × RPI_1617 / RPI_t
 
 **GB scaling:** Corrects methodology basis gap (N2EX day-ahead vs Annex M baseload):
 ```
-gb_scale = mean( panel_actual_GB[yr] / annex_m_ref_raw[yr]  for yr in 2023–2025 )
-gb_proj[yr] = gb_ref[yr] × gb_scale × adj_t[yr]               (2016/17-RPI-real GBP/MWh)
+scale_ratios[yr] = PANEL_ACTUALS_GB[yr] / gb_ref[yr]          ← cell 52; both in 2016/17-RPI-real
+gb_scale         = mean( scale_ratios[yr] for yr in 2023–2025 )
+gb_proj[yr]      = gb_ref[yr] × gb_scale                       (2016/17-RPI-real GBP/MWh)
 ```
-`panel_actual_GB` values are 2016/17-RPI-real (deflated from nominal). 2022 excluded — Annex M embeds actual 2022 prices so ratio ≈ 1.0 (no signal).
+`PANEL_ACTUALS_GB` is the RPI-deflated panel mean GB price for each year; `gb_ref[yr]` is the Annex M Reference value already converted to 2016/17-RPI-real via `adj_t`. Both are in the same price basis so the ratio is dimensionless. **Do not apply `ADJ_FACTORS` again in the scale computation** — adj_t has already been applied to `gb_ref` before this step; dividing by it a second time double-deflates and inflates the scale to ~1.40 (wrong). Correct scale ≈ 1.095. 2022 excluded — Annex M embeds actual 2022 prices so ratio ≈ 1.0 (no signal).
 
 **FR interpolation:** Node values (EUR/MWh; see `data.md §2`) linearly interpolated between node years; multiplied by 2024–25 panel mean FX rate (`fx_eur_gbp_fwd = panel.loc['2024':'2025','fx_eur_gbp'].mean()`); then converted to 2016/17-RPI-real via `_fr_real_1617`. Extrapolated flat beyond 2040.
 
@@ -267,11 +268,11 @@ CPIHt values also written to W3 Inputs row 145 for model consistency.
 
 | Period | Calendar years | Status |
 |--------|---------------|--------|
-| P1 | 2020–2024 | Closed; actual ICFap = £245.2m |
-| P2 | 2025–2029 | Open |
-| P3 | 2030–2034 | Open |
-| P4 | 2035–2039 | Open |
-| P5 | 2040–2044 | Open |
+| P1 | 2021–2025 | Closed (actuals used) |
+| P2 | 2026–2030 | Open |
+| P3 | 2031–2035 | Open |
+| P4 | 2036–2040 | Open |
+| P5 | 2041–2045 | Open |
 
 Op year N → calendar year = 2020 + N. ODR = 0.03945 real (from CFFM2 Assessment sheet row 13; also hardcoded in §19).
 
